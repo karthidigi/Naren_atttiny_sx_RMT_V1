@@ -57,7 +57,9 @@ void funcLedTest() {
 }
 
 void lowBattAlert() {
-  // 2 × red blink (200 ms on, 200 ms off)
-  funcStaLRed(); delay(200); funcLedReset(); delay(200);
-  funcStaLRed(); delay(200); funcLedReset();
+  // 5 × red blink — called before buzzer beeps which are added at the call site
+  // (buz.h is included after led.h so buzBeep is not visible here).
+  for (uint8_t i = 0; i < 5; i++) {
+    funcStaLRed(); delay(200); funcLedReset(); delay(150);
+  }
 }

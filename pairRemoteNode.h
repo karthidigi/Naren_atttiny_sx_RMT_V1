@@ -61,7 +61,8 @@ void enterRemNodePairMode() {
 
 // ── pairRemNodeHandleAck() ────────────────────────────────────────────────────
 // Called from dispatchPairPkt() when rx_buffer[0] == PKT_REM_PAIR_ACK (0x0E).
-// Packet: [0x0E][starter_id:20][sf:1][bwCode:1][cr:1][preamble:1][txPow:1] = 26 bytes
+// Packet: [0x0E][starter_id:20][sf:1][bwCode:1][cr:1][preamble:1][txPow:1][syncMsb:1][syncLsb:1]
+//         = 28 bytes (bytes 26-27 are dynamic sync word, absent in legacy 26-byte packets)
 void pairRemNodeHandleAck(const uint8_t* buf, uint8_t len) {
     if (len < 26) return;
     if (pairRemNodeState != PAIR_REMNODE_BEACONING) return;
@@ -73,7 +74,8 @@ void pairRemNodeHandleAck(const uint8_t* buf, uint8_t len) {
 
     // Save starter ID as peer serial in EEPROM; update cache
     savePeerSerial(starterId);
-    peerSerialCached = 1;   // cache: peer now stored
+    peerSerialCached = 1;             // cache: peer now stored
+    invalidatePeerSerialCache();      // flush encrypt.h RAM cache — next TX re-reads
 
     // Store RF params to apply after sending 0x0F
     pairRemNodeAckSf     = buf[21];
@@ -81,6 +83,14 @@ void pairRemNodeHandleAck(const uint8_t* buf, uint8_t len) {
     pairRemNodeAckCr     = buf[23];
     pairRemNodeAckPre    = buf[24];
     pairRemNodeAckPwr    = buf[25];
+
+    // Dynamic sync word (bytes 26-27, present in updated starters)
+    if (len >= 28) {
+        g_operSyncMsb = buf[26];
+        g_operSyncLsb = buf[27];
+        saveOperSyncWord(g_operSyncMsb, g_operSyncLsb);
+        DEBUG_PRINTN("PairRem: dyn sync word stored");
+    }
 
     // Visual acknowledgement
     funcStaLBlue();
@@ -130,9 +140,30 @@ void pairRemNodeTick() {
             }
 
             if (peerSerialCached == 0) {
-                // No peer stored — enter pairing mode; reset cache for next pairing
-                peerSerialCached = -1;
-                enterRemNodePairMode();
+                if (!isPairSentinelSet()) {
+                    // Sentinel absent → device has never completed a successful pairing
+                    // (factory-fresh EEPROM all 0xFF/0x00). Auto-enter pairing so a
+                    // brand-new device pairs without any extra steps.
+                    peerSerialCached = -1;
+                    enterRemNodePairMode();
+                } else {
+                    // Sentinel present but peer serial missing → EEPROM corruption
+                    // (e.g. brown-out mid-write on a previously-paired device).
+                    // DO NOT auto-pair: a loose battery or unexpected reset must never
+                    // silently put a field-deployed remote into pairing mode.
+                    // Alert every 10 s so the installer knows a re-pair boot combo
+                    // (M1_OFF + STA ≥ 5 s → confirm STA) is needed.
+                    static unsigned long noPeerAlertMs = 0;
+                    static bool          noPeerAlertOnce = false;
+                    if (!noPeerAlertOnce || (millis() - noPeerAlertMs >= 10000UL)) {
+                        noPeerAlertOnce = true;
+                        noPeerAlertMs   = millis();
+                        for (uint8_t i = 0; i < 3; i++) {
+                            funcStaLRed(); buzBeep(100); funcLedReset(); delay(150);
+                        }
+                    }
+                    // Buttons stay DISABLED — device cannot operate without a valid peer.
+                }
             } else {
                 // Already paired. sx1268Init() always starts on PAIR channel.
                 // Switch to operational channel once so communication works on
@@ -175,7 +206,13 @@ void pairRemNodeTick() {
 
             // Step 2: wait ~1 s for TX to complete, then switch to operational channel
             if (now - pairRemNodeDoneTxMs >= 1000UL) {
-                watchdogReset();  // ~1.5 s of blocking buzzer + LED ahead
+                watchdogReset();  // ~2.5 s of blocking buzzer + LED + reinit ahead
+
+                // Mark EEPROM as "ever successfully paired".
+                // From this point on, if the peer serial is ever found missing on
+                // boot (brown-out corruption), the IDLE handler will block auto-pair
+                // and require the deliberate boot combo instead.
+                setPairSentinel();
 
                 // 1-second beep = paired OK
                 buzBeep(1000);
@@ -183,7 +220,28 @@ void pairRemNodeTick() {
                 delay(500);
                 funcLedReset();
 
+                // ── Full radio reinit after pairing ───────────────────────────────
+                // The pairing sequence runs multiple TX/RX cycles on the pair channel
+                // (SF7/0x1234).  switchToOperationalChannel() alone does NOT reapply:
+                //   • TCXO configuration
+                //   • Full RF calibration (image rejection, etc.)
+                //   • setDioIrqParams  (IRQ mask that makes DIO1 fire on RX_DONE)
+                //   • fixResistanceAntenna errata workaround
+                //   • DIO1 pin interrupt re-arm (PORTA.PIN7CTRL)
+                // Without these, RX sensitivity degrades after pairing and the first
+                // S? response from the Starter is silently missed → 4× retries.
+                // enterSleep() already does sx1268Init()+switchToOperationalChannel()
+                // on every wake-up; replicate that here for the same guarantee.
+                sx1268Init();                   // full hardware reset + recalibration
                 switchToOperationalChannel();   // SF11/BW125/sync=0x3444
+
+                // ── Prevent duplicate switchToOperationalChannel() in IDLE ────────
+                // pairBootInitDone is normally set in the IDLE branch on a cold boot.
+                // After pairing it was never set, so the very next IDLE tick would
+                // call switchToOperationalChannel() again, issuing SX1268_setStandby()
+                // just as the first RX window opens — aborting reception of the first
+                // S? ACK.  Set it here to block that second call.
+                pairBootInitDone = true;
 
                 // Enable motor control buttons immediately after pairing.
                 // states.h boots with all action buttons DISABLED; they would

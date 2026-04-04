@@ -4,8 +4,6 @@
 static volatile bool lp_wakeup_flag = false;
 static unsigned long lp_last_activity = 0;
 
-bool lp_wkup_stbTx = 0;
-
 // ISR – native PORT interrupt (ATtiny1606 PC2 = STA_BTN)
 // PORTC_PORT_vect fires for any pin in PORT C.
 ISR(PORTC_PORT_vect) {
@@ -65,21 +63,11 @@ static inline void enterSleep() {
 
   // sx1268Init() already performed a hardware reset — no NSS toggle needed.
   lp_wakeup_flag = false;
-  lp_wkup_stbTx  = false;
   lp_last_activity = millis();
 }
 
 static inline void lowPowerPoll() {
   if ((millis() - lp_last_activity) >= LP_TIMEOUT_MS) {
     enterSleep();
-  }
-  // lp_wakeup_flag is cleared inside enterSleep() after the full reinit.
-  // This block is kept as a safety net for any future non-sleep wake paths.
-  if (lp_wakeup_flag) {
-    // Fallback: wake SX1268 via NSS toggle (SX126x datasheet §4.1.3)
-    digitalWrite(SX1268_NSS, LOW);
-    delayMicroseconds(200);
-    digitalWrite(SX1268_NSS, HIGH);
-    lp_wakeup_flag = false;
   }
 }

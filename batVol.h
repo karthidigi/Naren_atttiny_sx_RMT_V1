@@ -1,38 +1,35 @@
 #include <avr/io.h>
 
 uint16_t readVdd() {
-  // Use VDD as ADC reference
+  // Measure VDD by reading the internal 1.1 V bandgap against VDD as reference.
+  // VDD (mV) = (1100 × 1023) / ADC_result
   ADC0.CTRLC = ADC_PRESC_DIV4_gc | ADC_REFSEL_VDDREF_gc;
-
-  // Select input channel: internal 1.1V reference
   ADC0.MUXPOS = ADC_MUXPOS_INTREF_gc;
+  VREF.CTRLA  = VREF_ADC0REFSEL_1V1_gc;
+  ADC0.CTRLA  = ADC_ENABLE_bm;
 
-  // Set reference to 1.1V explicitly
-  VREF.CTRLA = VREF_ADC0REFSEL_1V1_gc;
-
-  // Enable ADC
-  ADC0.CTRLA = ADC_ENABLE_bm;
-
-  // Start conversion
+  // Dummy conversion: bandgap needs ~100 µs to stabilise after ADC enable;
+  // discard the first sample so subsequent reads are accurate.
   ADC0.COMMAND = ADC_STCONV_bm;
-  while (!(ADC0.INTFLAGS & ADC_RESRDY_bm))
-    ;
-
-  uint16_t result = ADC0.RES;
+  while (!(ADC0.INTFLAGS & ADC_RESRDY_bm));
   ADC0.INTFLAGS = ADC_RESRDY_bm;
 
-  // VDD = (1.1V * 1023) / ADCresult
-  if (result == 0) return 0;
-  uint32_t vdd_mv = (1100UL * 1023UL) / result;
+  // Average 4 samples to reduce ADC noise (~50 mV per single sample on battery).
+  uint32_t sum = 0;
+  for (uint8_t i = 0; i < 4; i++) {
+    ADC0.COMMAND = ADC_STCONV_bm;
+    while (!(ADC0.INTFLAGS & ADC_RESRDY_bm));
+    sum += ADC0.RES;
+    ADC0.INTFLAGS = ADC_RESRDY_bm;
+  }
 
-  return (uint16_t)vdd_mv;
+  ADC0.CTRLA = 0;  // disable ADC — saves ~130 µA on battery
+
+  uint16_t result = (uint16_t)(sum >> 2);  // divide by 4
+  if (result == 0) return 0;
+  return (uint16_t)((1100UL * 1023UL) / result);
 }
 
 bool battCheck() {
-  uint16_t vdd = readVdd();
-  if (vdd <= BAT_VOL_MIN) {
-    return false;
-  } else {
-    return true;
-  }
+  return readVdd() > BAT_VOL_MIN;
 }

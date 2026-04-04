@@ -2,15 +2,23 @@
 #define HEX_BUFFER_LEN (MAX_MESSAGE_LEN * 2 + 8)
 static char txBuffer[HEX_BUFFER_LEN + 4];
 
+// Peer serial cache — populated on first TX, invalidated after re-pairing.
+static char s_cachedPeerSerial[21] = { '\0' };
+
+// Call after writing a new peer serial to EEPROM (e.g. after pairing).
+void invalidatePeerSerialCache() { s_cachedPeerSerial[0] = '\0'; }
+
 static inline void encryptData(const char *msg) {
 
-  // Read peer serial from EEPROM
-  char peerSerialKey[21];
-  readPeerSerial(peerSerialKey, sizeof(peerSerialKey));
+  // Use cached peer serial; read EEPROM only on first call or after re-pair.
+  if (s_cachedPeerSerial[0] == '\0') {
+    readPeerSerial(s_cachedPeerSerial, sizeof(s_cachedPeerSerial));
+  }
+  const char *peerSerialKey = s_cachedPeerSerial;
 
   // Build AES key from last 12 chars of peer serial (6 bytes via fromHexChar)
   uint8_t key[KEY_LEN] = { 0 };
-  const char *last12 = peerSerialKey + 8;
+  const char *last12 = s_cachedPeerSerial + 8;
   for (uint8_t i = 0; i < 6; i++) {
     key[(KEY_LEN - 8) + i] = (fromHexChar(last12[i * 2]) << 4) | fromHexChar(last12[i * 2 + 1]);
   }

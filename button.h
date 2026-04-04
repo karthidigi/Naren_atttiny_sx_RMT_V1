@@ -92,6 +92,17 @@ static inline void hwbuttonFunc() {
 ////////////////////////////////////////
 void ackReception() {
   if (msgTxd) {
+    lowPowerKick();   // prevent LP sleep while waiting for ACK reply
+
+    // Fast retry on CRC error: packet arrived but payload was corrupted.
+    // Reset the ACK timer so the retry fires in ~500 ms instead of 6 s.
+    // Unsigned subtraction wraps correctly: millis() - ackTimerMillis will
+    // equal 5500 immediately after this assignment, reaching >6000 after ~500 ms.
+    if (rxCrcError) {
+      rxCrcError = false;
+      ackTimerMillis = millis() - 5500UL;
+    }
+
     // SF11 full ACK cycle: [S?] ToA ~1.1s + starter delay 1.5s + ACK ToA ~1.1s = ~3.7s total.
     // 6000ms gives 2.3s margin — enough for the full ACK to arrive before declaring a retry.
     if (millis() - ackTimerMillis > 6000) {

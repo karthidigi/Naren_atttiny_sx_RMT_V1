@@ -1,0 +1,143 @@
+#include "zSettings.h"
+#include "hwPins.h"
+#include "led.h"
+#include "batVol.h"
+#include "buz.h"
+#include "debug.h"
+#include "states.h"
+#include "watDog.h"
+#include "eeprom.h"
+#include "aesMain.h"
+#include "devId.h"
+#include "encrypt.h"
+#include "rxFunc.h"
+#include "decrypt.h"
+#include "sx1268Main.h"      // SX1268 radio driver (replaces llcc68Main.h)
+#include "lowPow.h"
+#include "button.h"
+#include "pairRemoteNode.h"  // Starter↔Remote LoRa pairing (must be after sx1268Main.h)
+
+void setup() {
+  hwPinInit();
+
+  // ── Anti-glitch settling delay ─────────────────────────────────────────────
+  // INPUT_PULLUP lines need ~100 ms to charge through the internal ~50 kΩ after
+  // a cold start or rapid power-cycle from a loose battery.  Without this delay
+  // the very first digitalRead() can see a floating LOW and falsely trigger the
+  // pairing combo.
+  delay(300);
+
+  // ── Boot re-pair — deliberate 2-step combo ─────────────────────────────────
+  // Step 1: Hold M1_OFF + STA together for ≥ 5 s.
+  //         RED LED blinks every 500 ms as visual countdown feedback.
+  //         Releasing either button before 5 s aborts silently.
+  // Step 2: After the 5 s hold, release both buttons, then press STA once
+  //         within 3 s to CONFIRM.  3× WHITE flashes prompt the user.
+  //         No confirmation within 3 s → aborts (1× RED flash = cancelled).
+  //
+  // Two-step requirement prevents a single unintended long-press or a loose
+  // battery bounce from accidentally wiping the pairing.
+  // enterRemNodePairMode() is called AFTER sx1268Init() so the radio is ready.
+  bool bootRepair = false;
+  if (digitalRead(M1_OFF_BTN) == LOW && digitalRead(STA_BTN) == LOW) {
+    // ── Step 1: 5-second hold with RED blink countdown ──────────────────────
+    unsigned long holdStart   = millis();
+    unsigned long lastBlinkMs = 0;
+    bool          ledOn       = false;
+    bool          held5s      = false;
+
+    while (digitalRead(M1_OFF_BTN) == LOW && digitalRead(STA_BTN) == LOW) {
+      // Blink RED every 500 ms so the user sees the hold is being registered
+      if (millis() - lastBlinkMs >= 500UL) {
+        lastBlinkMs = millis();
+        if (ledOn) { funcLedReset(); ledOn = false; }
+        else        { funcStaLRed();  ledOn = true;  }
+      }
+      if (millis() - holdStart >= 5000UL) { held5s = true; break; }
+    }
+    funcLedReset();
+
+    if (held5s) {
+      // ── Step 2: 3× rapid WHITE flashes = "confirm with STA press" ─────────
+      for (uint8_t i = 0; i < 3; i++) {
+        funcStaLWhite(); delay(150); funcLedReset(); delay(150);
+      }
+
+      // Wait up to 3 s for a deliberate STA press to confirm
+      unsigned long confirmStart = millis();
+      while (millis() - confirmStart < 3000UL) {
+        if (digitalRead(STA_BTN) == LOW) {
+          while (digitalRead(STA_BTN) == LOW) delay(1);  // wait for release
+          bootRepair = true;
+          break;
+        }
+      }
+
+      if (!bootRepair) {
+        // Timed out without confirmation — 1× RED = aborted
+        funcStaLRed(); delay(500); funcLedReset();
+      }
+    }
+    // If Step 1 hold was released early, we fall through with bootRepair = false
+  }
+
+  /////////////////////
+  if (battCheck()) {
+    funcStaLWhite();
+  } else {
+    lowBattAlert();
+    buzBeep(80); delay(100); buzBeep(80); delay(100); buzBeep(80);  // 3 beeps after 5 blinks
+  }
+  delay(500);
+  funcLedReset();
+  ////////////////////
+  buzBeep(BUZZ_NOR);
+  hwSerialInit();
+  getDeviceSerId();
+  aesInit("[horizon]");
+  sx1268Init();
+  lowPowerInit();
+
+  // Trigger re-pair now that radio is initialised
+  if (bootRepair) {
+    clearPeerSerial();
+    enterRemNodePairMode();   // switches to PAIR channel, starts beaconing
+  }
+
+  if (!wdtEnabled) {
+    watchdogInit();
+    wdtEnabled = true;
+  }
+  // Peer serial (Starter ID) is stored via LoRa pairing — no hardcoded ID.
+  // pairRemNodeTick() auto-pairs only on factory-fresh EEPROM (sentinel absent).
+  // Previously-paired devices with corrupt EEPROM require the boot combo above.
+}
+
+void loop() {
+
+  lowPowerPoll();
+  hwbuttonFunc();
+  ackReception();      // STA retry / timeout handler (defined in button.h)
+  sx1268Func();
+  pairRemNodeTick();   // pairing state machine; auto-pairs only on factory-fresh device
+  // funcLedReset() removed from here — every LED action already resets at its own end.
+  // Removing it allows pairRemNodeTick() 4-phase blink to stay visible between loop ticks.
+
+  // Periodic low-battery check every 30 s.
+  // WDT is reset before the alert so the ~2.4 s blocking sequence is safe.
+  static unsigned long lastBatCheck = 0;
+  if (millis() - lastBatCheck >= 30000UL) {
+    lastBatCheck = millis();
+    if (!battCheck()) {
+      if (wdtEnabled) watchdogReset();
+      lowBattAlert();
+      buzBeep(80); delay(100); buzBeep(80); delay(100); buzBeep(80);  // 3 beeps after 5 blinks
+    }
+  }
+
+  if (wdtEnabled) {
+    watchdogReset();
+  }
+
+  delay(5);
+}

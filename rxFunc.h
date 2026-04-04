@@ -5,15 +5,12 @@ bool liRelRemState = false;   // tracks last known state of starter LiREL relay
 void rxFunc() {
   msgTxd = 0;
   if (strcmp(encapData, "1N") == 0) {
-    // Motor ON confirmed — 3× GREEN blink + 4× 100 ms buzzer tone
+    // Motor ON confirmed — green LED blinks + low-base tone (~2 s)
     buttonEn[0] = DISABLED;  // M1_ON  (motor running — can't turn on again)
     buttonEn[1] = ENABLED;   // M1_OFF
     buttonEn[2] = ENABLED;   // STA
-    funcM1LGreen(); buzBeep(100); funcLedReset(); delay(60);
-    funcM1LGreen(); buzBeep(100); funcLedReset(); delay(60);
-    funcM1LGreen(); buzBeep(100); funcLedReset(); delay(60);
-    buzBeep(100);                                              // 4th tone, no LED
-    funcLedReset();
+    watchdogReset();          // tone is ~2 s; WDT is 4 s — reset before blocking
+    motorOnTone();            // handles LED blink + buzzer; resets LED on exit
 
   } else if (strcmp(encapData, "1F") == 0) {
     // Motor OFF confirmed — 2× RED blink + 2× 100 ms buzzer tone
@@ -93,8 +90,6 @@ void rxFunc() {
     funcLedReset();
 
   } else {
-    funcM1Yellow();
-    delay(100);
-    funcLedReset();
+    // Unknown or noise packet — ignore silently (no LED)
   }
 }

@@ -22,6 +22,13 @@
 
 volatile bool dio1_triggered = false;
 
+// ── Dynamic operational sync word ────────────────────────────────────────────
+// Defaults to the compiled-in constants until a pairing completes and the
+// Starter-derived sync word is received in 0x0E and stored in EEPROM.
+// Updated by pairRemoteNode.h on successful pairing.
+uint8_t g_operSyncMsb = OPER_SYNC_MSB;
+uint8_t g_operSyncLsb = OPER_SYNC_LSB;
+
 // ────────────────────────────────────────────────
 // Forward declarations
 // ────────────────────────────────────────────────
@@ -50,6 +57,9 @@ enum RadioState {
 static uint8_t radioBuf[32];  // shared TX/RX buffer
 #define payload radioBuf      // alias for TX
 #define bufferRadio radioBuf  // alias for RX
+
+// Set when an RX_DONE + CRC_ERR IRQ fires — signals ackReception() to retry fast
+volatile bool rxCrcError = false;
 
 static unsigned long state_start_time = 0;
 static const unsigned long TX_TIMEOUT_MS = 5000UL;    // SF11/BW125 ToA ~1.1 s + 3.9 s margin
@@ -108,7 +118,9 @@ void switchToPairChannel() {
   DEBUG_PRINTN("Radio: switched to PAIR channel (SF7/BW125/0x1234)");
 }
 
-// Switch to SF11/BW125/CR4-5/pre=12/sync=0x3444/22dBm  (LDRO=1)
+// Switch to SF11/BW125/CR4-5/pre=12 + dynamic sync word/22dBm  (LDRO=1)
+// Sync word is g_operSyncMsb/g_operSyncLsb (loaded from EEPROM after pairing,
+// or defaults to OPER_SYNC_MSB/LSB on factory-fresh devices).
 void switchToOperationalChannel() {
   SX1268_setStandby(SX1268_STANDBY_RC);
   SX1268_setModulationParamsLoRa(OPER_SF, OPER_BW, OPER_CR, 1);  // LDRO=1
@@ -116,7 +128,7 @@ void switchToOperationalChannel() {
                              SX1268_CRC_ON, SX1268_IQ_STANDARD);
   // SX126x errata: re-apply IQ register after every setPacketParams call
   SX1268_fixInvertedIq(SX1268_IQ_STANDARD);
-  uint8_t sw[2] = { OPER_SYNC_MSB, OPER_SYNC_LSB };
+  uint8_t sw[2] = { g_operSyncMsb, g_operSyncLsb };
   SX1268_writeRegister(SX1268_REG_LORA_SYNC_WORD_MSB, sw, 2);
   SX1268_setTxParams(OPER_TX_POWER, SX1268_PA_RAMP_200U);
   SX1268_clearIrqStatus(SX1268_IRQ_ALL);
@@ -124,7 +136,7 @@ void switchToOperationalChannel() {
   radio_state = STATE_IDLE;
   state_start_time = millis();
   pairing_mode = false;  // operational: AES-encrypted packets only
-  DEBUG_PRINTN("Radio: switched to OPER channel (SF11/BW125/0x3444)");
+  DEBUG_PRINTN("Radio: switched to OPER channel (dyn sync)");
 }
 
 // ────────────────────────────────────────────────
@@ -165,6 +177,11 @@ void sx1268Init() {
   SX1268_setRfFrequency(rfFreq);
 
   SX1268_setPaConfig(0x04, 0x07, 0x00, 0x01);
+  // OCP: MUST be set to 0x38 (140 mA) for SX1262/SX1268 HP path (datasheet §13.4.4).
+  // Reset default is 0x18 (60 mA) which current-starves the PA at 22 dBm, silently
+  // reducing actual TX power by several dBm and killing range.
+  uint8_t ocp = 0x38;
+  SX1268_writeRegister(SX1268_REG_OCP_CONFIGURATION, &ocp, 1);
   SX1268_setTxParams(PAIR_TX_POWER, SX1268_PA_RAMP_200U);
 
   // Init on PAIR channel (SF7/BW125/CR4-5/LDRO=0/pre=8)
@@ -193,9 +210,10 @@ void sx1268Init() {
   radio_state = STATE_IDLE;
   state_start_time = millis();
   dio1_triggered = false;
-  // Seed the watchdog timestamp so it doesn't fire immediately after init/reinit
-  // (last_radio_activity is a static inside sx1268Func; init it via a dummy write
-  //  on first call — the real seeding happens via the watchdog check path.)
+
+  // Load dynamic sync word from EEPROM (written during pairing).
+  // Falls back to compiled-in defaults if not yet paired.
+  loadOperSyncWord(&g_operSyncMsb, &g_operSyncLsb);
 }
 
 // ────────────────────────────────────────────────
@@ -295,6 +313,7 @@ void sx1268Func() {
             // Received preamble+header OK but payload CRC failed.
             // Means packet reached us but was corrupted (range boundary / interference).
             DEBUG_PRINTN("RX CRC Err");
+            rxCrcError = true;  // signal ackReception() to fast-retry
           } else if (irq_status & SX1268_IRQ_HEADER_ERR) {
             // Preamble detected but header could not be decoded.
             // Usually means very weak signal or wrong SF/BW on sender.

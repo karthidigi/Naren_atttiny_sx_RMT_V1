@@ -28,13 +28,9 @@ static inline bool decryptData(const uint8_t* rx_buf, uint8_t rx_len) {
   // Remaining ciphertext (ASCII hex)
   const char* cipherHex = hexBuf + 6;
 
-  // ---- Build AES key from *this receiver's* chip serial ----
-  char selfSerial[21];
-  getChipSerial(selfSerial, sizeof(selfSerial));
-  //DEBUG_PRINTN(selfSerial);
-
+  // ---- Build AES key from *this receiver's* chip serial (cached global) ----
   uint8_t key[KEY_LEN] = { 0 };
-  const char* last12 = selfSerial + 8;  // last 12 chars = 6 bytes
+  const char* last12 = hwSerialKey + 8;  // last 12 chars = 6 bytes
   for (uint8_t i = 0; i < 6; i++) {
     key[(KEY_LEN - 8) + i] = (fromHexChar(last12[i * 2]) << 4) | fromHexChar(last12[i * 2 + 1]);
   }
@@ -44,7 +40,7 @@ static inline bool decryptData(const uint8_t* rx_buf, uint8_t rx_len) {
   key[KEY_LEN - 1] = rnd & 0xFF;
 
   //---- Decrypt ----
-  if (decryptWithIdx(cipherHex, key, selfSerial, decBuf, sizeof(decBuf))) {
+  if (decryptWithIdx(cipherHex, key, hwSerialKey, decBuf, sizeof(decBuf))) {
     char* start = strchr(decBuf, '[');
     char* end = strchr(decBuf, ']');
 
@@ -59,17 +55,13 @@ static inline bool decryptData(const uint8_t* rx_buf, uint8_t rx_len) {
         //DEBUG_PRINTN(encapData);
         return true;
       } else {
-        delay(10);
         //DEBUG_PRINTN(F("Content too long"));
       }
     } else {
-      delay(10);
       //DEBUG_PRINTN(F("Invalid message (no brackets)"));
     }
   } else {
     //DEBUG_PRINTN(F("Decrypt failed"));
-    funcStaLWhite();
-    delay(200);
   }
   return false;
 }
