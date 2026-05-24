@@ -20,6 +20,31 @@ void funcStaLRed() {
   PORTC.DIRSET = PIN1_bm;
 }
 
+// Orange (red + green): fault / alarm — F1, D1, A0
+void funcStaLOrange() {
+  funcLedReset();
+  PORTC.OUTCLR = PIN1_bm;   // red on (PC1)
+  PORTB.OUTCLR = PIN4_bm;   // green on (PB4) → red + green = orange/amber
+  PORTC.DIRSET = PIN1_bm;
+  PORTB.DIRSET = PIN4_bm;
+}
+
+// Cyan (blue + green): bypass / override — B1, D2
+void funcStaLCyan() {
+  funcLedReset();
+  PORTB.OUTCLR = PIN3_bm | PIN4_bm;  // blue (PB3) + green (PB4) = cyan
+  PORTB.DIRSET = PIN3_bm | PIN4_bm;
+}
+
+// Pink (red + blue): no network — ackFailAtmp >= 3
+void funcStaLPink() {
+  funcLedReset();
+  PORTC.OUTCLR = PIN1_bm;   // red on (PC1)
+  PORTB.OUTCLR = PIN3_bm;   // blue on (PB3) → red + blue = pink
+  PORTC.DIRSET = PIN1_bm;
+  PORTB.DIRSET = PIN3_bm;
+}
+
 void funcStaLWhite() {
   funcLedReset();
   PORTC.OUTCLR = PIN1_bm;             // red on (PC1)

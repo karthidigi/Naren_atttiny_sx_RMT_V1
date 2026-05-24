@@ -9,7 +9,7 @@
 //
 // Pairing channel : SF7 /BW125/CR4-5/pre=8 /sync=0x1234/14dBm  (LDRO=0)
 // Operational channel: SF11/BW125/CR4-5/pre=12/sync=0x3444/22dBm (LDRO=1)
-// Frequency: 900 MHz
+// Frequency: 910 MHz
 // NOTE: Operational RF params MUST MATCH STARTER (AVRDB_LLCC_V2_2_GSM_But_LCD)
 
 #ifndef SX1268_MAIN_H
@@ -161,19 +161,13 @@ void sx1268Init() {
   SX1268_setStandby(SX1268_STANDBY_RC);
 
   SX1268_setRegulatorMode(SX1268_REGULATOR_DC_DC);
-  // SX1268_calibrateImage(SX1268_CAL_IMG_902, SX1268_CAL_IMG_928);
-
-  // After  — 863–870 MHz (EU868, covers 867 MHz exactly)
-  SX1268_calibrateImage(SX1268_CAL_IMG_863, SX1268_CAL_IMG_870);
+  SX1268_calibrateImage(SX1268_CAL_IMG_902, SX1268_CAL_IMG_928);  // 902–928 MHz covers 910 MHz
 
   // NOTE: SX1262 has NO internal DIO2 RF switch — do NOT call setDio2AsRfSwitchCtrl()
   SX1268_setPacketType(SX1268_LORA_MODEM);
 
-  // Frequency: 900 MHz
-  // uint32_t rfFreq = ((uint64_t)900000000UL << SX1268_RF_FREQUENCY_SHIFT) / SX1268_RF_FREQUENCY_XTAL;
-
-  // After
-  uint32_t rfFreq = ((uint64_t)867000000UL << SX1268_RF_FREQUENCY_SHIFT) / SX1268_RF_FREQUENCY_XTAL;
+  // Frequency: 910 MHz
+  uint32_t rfFreq = ((uint64_t)910000000UL << SX1268_RF_FREQUENCY_SHIFT) / SX1268_RF_FREQUENCY_XTAL;
   SX1268_setRfFrequency(rfFreq);
 
   SX1268_setPaConfig(0x04, 0x07, 0x00, 0x01);

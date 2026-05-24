@@ -23,6 +23,39 @@ static inline void hwbuttonFunc() {
   // Runtime re-pair combo REMOVED for v2-2 board.
   // Re-pair is triggered by boot combo only (M1_OFF + STA >= 5s in setup()).
 
+  // ── STA-wake TX ──────────────────────────────────────────────────────────────
+  // The STA falling edge that woke the MCU from deep sleep is consumed by the
+  // PORTC ISR before hwbuttonFunc() ever polls the pin — by the time we get
+  // here (after sx1268Init() + switchToOperationalChannel() which take ~500 ms+)
+  // the button is almost certainly already released.  lp_wkup_stbTx carries the
+  // "STA caused the wake" information so the TX is never silently lost.
+  if (lp_wkup_stbTx && !msgTxd && buttonEn[2] == ENABLED) {
+    lp_wkup_stbTx = false;
+    lowPowerKick();
+    funcStaLBlue(); buzBeep(50); funcLedReset();
+    // STA button may still be physically held here.  Wait for release then reset
+    // all button debounce state so the regular scan below does NOT detect a
+    // second falling edge and fire a duplicate TX.  A duplicate TX overrides
+    // STATE_TX_WAIT mid-transmit and corrupts the radio.
+    while (digitalRead(buttonPins[2]) == LOW) {
+      watchdogReset();
+      delay(1);
+    }
+    delay(debounceDelay);   // 50 ms RC-settle after release
+    for (uint8_t j = 0; j < NUM_BUTTONS; j++) {
+      buttonStates[j]      = 1;   // HIGH = released
+      lastButtonStates[j]  = 1;
+      lastDebounceTimes[j] = millis();
+    }
+    strncpy(lastTxCmd, "[S?]", sizeof(lastTxCmd));
+    encryptNTx("[S?]");
+    msgTxd         = 1;
+    ackFailAtmp    = 0;
+    ackTimerMillis = millis();
+    return;   // skip regular button scan this tick
+  }
+  lp_wkup_stbTx = false;   // clear if buttons not yet enabled (e.g. still pairing)
+
   for (uint8_t i = 0; i < NUM_BUTTONS; ++i) {
     uint8_t reading = digitalRead(buttonPins[i]);
     if (reading != lastButtonStates[i]) lastDebounceTimes[i] = millis();
@@ -108,11 +141,11 @@ void ackReception() {
     if (millis() - ackTimerMillis > 6000) {
       if (ackFailAtmp >= 3) {
         noNetworkTone();
-        funcStaLWhite();
+        funcStaLPink();    // no-network indicator: pink (red + blue)
         delay(300);
         funcLedReset();
         delay(300);
-        funcStaLWhite();
+        funcStaLPink();
         delay(300);
         funcLedReset();
         // Radio re-init: after repeated TX failures the radio may be stuck in a

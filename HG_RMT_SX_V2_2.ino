@@ -83,12 +83,12 @@ void setup() {
 
   /////////////////////
   if (battCheck()) {
-    funcStaLWhite();
+    funcStaLBlue();    // power-on indicator: blue 80 ms
   } else {
     lowBattAlert();
     buzBeep(80); delay(100); buzBeep(80); delay(100); buzBeep(80);  // 3 beeps after 5 blinks
   }
-  delay(500);
+  delay(80);
   funcLedReset();
   ////////////////////
   buzBeep(BUZZ_NOR);
