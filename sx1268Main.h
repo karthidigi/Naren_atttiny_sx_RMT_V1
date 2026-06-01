@@ -39,6 +39,8 @@ void switchToPairChannel();
 void switchToOperationalChannel();
 // dispatchPairPkt is defined in pairRemoteNode.h (included after sx1268Main.h)
 void dispatchPairPkt(const uint8_t* buf, uint8_t len);
+// remHandleRsp is defined in remProto.h (included after sx1268Main.h)
+void remHandleRsp(const uint8_t* buf, uint8_t len);
 
 // ────────────────────────────────────────────────
 // Radio state machine
@@ -118,12 +120,13 @@ void switchToPairChannel() {
   DEBUG_PRINTN("Radio: switched to PAIR channel (SF7/BW125/0x1234)");
 }
 
-// Switch to SF11/BW125/CR4-5/pre=12 + dynamic sync word/22dBm  (LDRO=1)
+// Switch to OPER_SF/OPER_BW/CR4-5/pre=12 + dynamic sync word/22dBm
+// OPER_LDRO is compile-time: 1 for SF11+BW125, 0 for SF10+BW250.
 // Sync word is g_operSyncMsb/g_operSyncLsb (loaded from EEPROM after pairing,
 // or defaults to OPER_SYNC_MSB/LSB on factory-fresh devices).
 void switchToOperationalChannel() {
   SX1268_setStandby(SX1268_STANDBY_RC);
-  SX1268_setModulationParamsLoRa(OPER_SF, OPER_BW, OPER_CR, 1);  // LDRO=1
+  SX1268_setModulationParamsLoRa(OPER_SF, OPER_BW, OPER_CR, OPER_LDRO);
   SX1268_setPacketParamsLoRa(OPER_PREAMBLE, SX1268_HEADER_EXPLICIT, 32,
                              SX1268_CRC_ON, SX1268_IQ_STANDARD);
   // SX126x errata: re-apply IQ register after every setPacketParams call
@@ -264,6 +267,10 @@ void sx1268Func() {
 
     case STATE_RX_SETUP:
       {
+        // After timed RX timeout/done the radio returns to STDBY_RC automatically.
+        // Explicit standby here ensures a known state before reconfiguring the
+        // buffer — guards against any edge case where the transition was missed.
+        SX1268_setStandby(SX1268_STANDBY_RC);
         dio1_triggered = false;
         SX1268_setBufferBaseAddress(0x00, 0x80);
         SX1268_clearIrqStatus(SX1268_IRQ_ALL);
@@ -299,8 +306,10 @@ void sx1268Func() {
               // silently misrouted and rxFunc() would never run.
               if (pairing_mode && rx_buffer[0] >= PKT_PAIR_REQ && rx_buffer[0] <= PKT_REM_PAIR_DONE) {
                 dispatchPairPkt(rx_buffer, rx_length);
+              } else if (rx_buffer[0] == PKT_REM_RSP) {
+                remHandleRsp(rx_buffer, rx_length);
               } else {
-                decryptNFunc(rx_buffer, rx_length);
+                DEBUG_PRINTN("RX: ignored");
               }
             }
           } else if (irq_status & SX1268_IRQ_CRC_ERR) {

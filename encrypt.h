@@ -1,3 +1,8 @@
+// ── DEAD FILE — replaced by remProto.h (Remote Binary Protocol, RBP) ─────────
+// This file implemented the old AES-CTR text-frame TX protocol.
+// It is no longer #included from the .ino.  Any accidental re-include is an error.
+#error "encrypt.h is superseded by remProto.h — do not include this file"
+
 /////////////////////////////////////////////////////////
 #define HEX_BUFFER_LEN (MAX_MESSAGE_LEN * 2 + 8)
 static char txBuffer[HEX_BUFFER_LEN + 4];

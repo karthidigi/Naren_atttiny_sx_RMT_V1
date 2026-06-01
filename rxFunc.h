@@ -1,3 +1,8 @@
+// ── DEAD FILE — replaced by remProto.h / sx1268Main.h dispatch ───────────────
+// This file implemented the old text-command RX handler (encapData string parser).
+// It is no longer #included from the .ino.  Any accidental re-include is an error.
+#error "rxFunc.h is superseded by remProto.h — do not include this file"
+
 ///////////////////////////////////////
 char encapData[MAX_MESSAGE_LEN];
 bool liRelRemState = false;   // tracks last known state of starter LiREL relay

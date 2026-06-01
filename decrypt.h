@@ -1,3 +1,8 @@
+// ── DEAD FILE — replaced by remProto.h (Remote Binary Protocol, RBP) ─────────
+// This file implemented the old AES-CTR text-frame RX/decrypt protocol.
+// It is no longer #included from the .ino.  Any accidental re-include is an error.
+#error "decrypt.h is superseded by remProto.h — do not include this file"
+
 // Receiver-side: decrypt incoming LoRa buffer
 
 char decBuf[MAX_MESSAGE_LEN + 1];

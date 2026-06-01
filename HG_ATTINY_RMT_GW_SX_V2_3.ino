@@ -9,11 +9,9 @@
 #include "eeprom.h"
 #include "aesMain.h"
 #include "devId.h"
-#include "encrypt.h"
-#include "rxFunc.h"
-#include "decrypt.h"
 #include "sx1268Main.h"      // SX1268 radio driver (replaces llcc68Main.h)
 #include "lowPow.h"
+#include "remProto.h"        // RBP: remSendCmd/remSendCmdNew/remHandleRsp (must be after sx1268Main.h)
 #include "button.h"
 #include "pairRemoteNode.h"  // Starter↔Remote LoRa pairing (must be after sx1268Main.h)
 

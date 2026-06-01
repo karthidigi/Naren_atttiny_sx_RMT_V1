@@ -75,7 +75,7 @@ void pairRemNodeHandleAck(const uint8_t* buf, uint8_t len) {
     // Save starter ID as peer serial in EEPROM; update cache
     savePeerSerial(starterId);
     peerSerialCached = 1;             // cache: peer now stored
-    invalidatePeerSerialCache();      // flush encrypt.h RAM cache — next TX re-reads
+    remInvalidatePeerCache();         // flush remProto.h RAM cache — next TX re-reads
 
     // Store RF params to apply after sending 0x0F
     pairRemNodeAckSf     = buf[21];
