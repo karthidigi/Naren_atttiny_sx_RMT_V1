@@ -46,8 +46,8 @@ static inline void enterSleep() {
   rxCrcError    = false;   // stale CRC flag would trigger a fast-retry (<500 ms) before ACK arrives
   lp_wkup_stbTx = false;  // clear any leftover flag before sleeping
 
-  // 2. Put SX1268 to sleep (warm start: retains calibration, faster wake)
-  SX1268_setSleep(SX1268_SLEEP_WARM_START);
+  // 2. Put SX1262 to sleep (warm start: retains calibration, faster wake)
+  sx126x_set_sleep(RADIO, SX126X_SLEEP_CFG_WARM_START);
 
   // 3. Disable watchdog before sleep — WDT cannot be serviced during PWR_DOWN
   watchdogDisableFun();

@@ -96,10 +96,32 @@ void setup() {
   sx1268Init();
   lowPowerInit();
 
-  // Trigger re-pair now that radio is initialised
+  // Trigger re-pair now that radio is initialised.
+  // NOTE: do NOT clearPeerSerial() here — the previous binding must survive a
+  // failed/aborted re-pair. The new peer is committed only after the full
+  // 0x0D→0x0E→0x0F handshake succeeds (see pairRemoteNode.h). If the re-pair
+  // times out, the BEACONING-timeout revert restores the previous peer + channel.
   if (bootRepair) {
-    clearPeerSerial();
     enterRemNodePairMode();   // switches to PAIR channel, starts beaconing
+  } else {
+    // Hardening: if already paired, switch PAIR→OPER channel HERE (in setup, before
+    // loop()/hwbuttonFunc() ever runs) so the radio is deterministically on the
+    // operational channel for the very first button press. Previously this switch
+    // happened in the first pairRemNodeTick() — which runs AFTER hwbuttonFunc() in the
+    // loop — leaving a brief window where an early press could TX on the PAIR channel.
+    // Factory-fresh / EEPROM-corrupt devices (no peer serial) are left on the PAIR
+    // channel for pairRemNodeTick() to handle (auto-pair or no-peer alert).
+    char peerBuf[21];
+    readPeerSerial(peerBuf, sizeof(peerBuf));
+    if (peerBuf[0] != '\0' && peerBuf[0] != (char)0xFF) {
+      switchToOperationalChannel();
+      bootPrimePending = true;   // warm the radio before the user's first press (pairRemNodeTick)
+      pairBootInitDone = true;   // tell pairRemNodeTick the boot channel switch is already done
+      peerSerialCached = 1;      // keep its cache consistent → no duplicate EEPROM read
+      buttonEn[0] = ENABLED;     // M1_ON
+      buttonEn[1] = DISABLED;    // M1_OFF (motor off at boot — can't turn off again)
+      buttonEn[2] = ENABLED;     // STA
+    }
   }
 
   if (!wdtEnabled) {

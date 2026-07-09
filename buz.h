@@ -11,17 +11,16 @@
 #define NOTE_C6 1047
 #define NOTE_E6 1319
 
-// Motor ON confirmed — "Victory Fanfare" ~2 s.
+// Motor ON confirmed — short happy rising chime (~0.5 s).
 // Hardware tone() drives the buzzer; no software PWM while-loop.
 // Green LED blinks every 150 ms throughout the tone duration.
-// Call watchdogReset() before invoking (WDT = 4 s, tone ≈ 2 s).
+// Call watchdogReset() before invoking (WDT = 4 s, tone ≈ 0.5 s — comfortably safe).
 void motorOnTone() {
-  const int     mel[] = { NOTE_C5, NOTE_E5, NOTE_G5, NOTE_C6,
-                           NOTE_E6, NOTE_C6, NOTE_G5, NOTE_C6 };
-  const uint8_t dur[] = { 10, 10, 10, 10, 7, 10, 10, 3 };
-  // note ms (1000/div): 100 100 100 100 142 100 100 333 = 1075 ms
-  // pauses  (30% each):  30  30  30  30  42  30  30  99 =  321 ms
-  // total ≈ 1396 ms ≈ 1.4 s
+  const int     mel[] = { NOTE_C5, NOTE_E5, NOTE_G5, NOTE_C6, NOTE_E6 };
+  const uint8_t dur[] = { 14, 14, 12, 12, 9 };
+  // note ms (1000/div): 71 71 83 83 111 = 419 ms
+  // pauses  (30% each): 21 21 24 24  33 = 123 ms
+  // total ≈ 542 ms
 
   // ── Why _delay_ms(1) instead of millis() or delay() ───────────────────────
   // tone() on PIN_PB0 uses TCA0 lower half (WO0). It reprograms LPER to the
@@ -90,17 +89,28 @@ void motorOnTone() {
 }
 
 void noNetworkTone() {
+  // tone() on TCA0 corrupts millis() for the duration of the note.
+  // Using tone(pin, freq, duration) relies on millis() for auto-stop and does NOT
+  // reliably restore TCA0's LPER to 1 ms after the note ends — millis() stays
+  // corrupted or frozen, causing delay() calls (and the radio BUSY-wait) to block
+  // for wrong durations (potentially > WDT period).
+  // Fix: same pattern as motorOnTone() — no duration arg, manual _delay_ms() timing.
   const int     mel[] = { NOTE_C5, NOTE_A4, NOTE_F4 };
   const uint8_t dur[] = { 16, 16, 8 };
 
   size_t length = sizeof(mel) / sizeof(mel[0]);
   for (size_t i = 0; i < length; i++) {
-    unsigned long noteDuration = 1000UL / dur[i];
-    tone(BUZ, (unsigned int)mel[i], noteDuration);  // hardware tone — no while-loop
-    delay(noteDuration + noteDuration / 5);          // note duration + 20% pause
+    uint16_t noteDuration  = 1000U / dur[i];
+    uint16_t pauseDuration = noteDuration / 5;
+
+    tone(BUZ, (unsigned int)mel[i]);   // start note — no duration; we stop manually
+    for (uint16_t t = 0; t < noteDuration; t++) _delay_ms(1);
+    noTone(BUZ);
+    digitalWrite(BUZ, HIGH);           // silence active-low buzzer during pause
+    for (uint16_t t = 0; t < pauseDuration; t++) _delay_ms(1);
   }
   noTone(BUZ);
-  digitalWrite(BUZ, HIGH);  // Ensure idle
+  digitalWrite(BUZ, HIGH);
 }
 
 // Buzzer: short blocking beep only for small durations

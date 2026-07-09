@@ -12,13 +12,32 @@ static uint8_t lastTxCmdCode = 0;  // REM_CMD_* of the last new command; 0 = non
 // which is included after button.h in the .ino
 void enterRemNodePairMode();
 
+// ── STA-as-modifier (light-switch chord) state ───────────────────────────────
+// STA (index 2) is a modifier: while it is held, M1_ON/M1_OFF become the light
+// commands REM_CMD_RELAY_ON/OFF (and the motor command is suppressed). A lone
+// STA tap still sends STATUS (deferred to release). This is the safety guard so
+// a motor STOP only ever fires when STA is NOT held, and a light action only
+// ever fires when STA IS held — the two can never cross.
+static bool staActive   = false;  // STA currently held (debounced)
+static bool staConsumed = false;  // a chord fired during this STA hold
+
+// Centralised command TX: disable all buttons until the ACK arrives, send, arm
+// the retry timer. Used by every button/chord path.
+static inline void remTxButtonCmd(uint8_t cmd) {
+  for (uint8_t j = 0; j < NUM_BUTTONS; j++) buttonEn[j] = DISABLED;
+  lastTxCmdCode  = cmd;
+  remSendCmdNew(cmd);
+  msgTxd         = 1;
+  ackFailAtmp    = 0;
+  ackTimerMillis = millis();
+}
+
 static inline void hwbuttonFunc() {
   // ── STA-wake TX ──────────────────────────────────────────────────────────────
   // The STA falling edge that woke the MCU from deep sleep is consumed by the
-  // PORTC ISR before hwbuttonFunc() ever polls the pin — by the time we get here
-  // (after sx1268Init() + switchToOperationalChannel() which take ~500 ms+) the
-  // button is almost certainly already released.  lp_wkup_stbTx carries the
-  // "STA caused the wake" information so the TX is never silently lost.
+  // PORTC ISR before hwbuttonFunc() ever polls the pin. lp_wkup_stbTx carries the
+  // "STA caused the wake" info so the STATUS TX is never lost. (A STA+OFF chord
+  // from deep sleep sends STATUS on wake; re-press while awake for light control.)
   if (lp_wkup_stbTx && !msgTxd && buttonEn[2] == ENABLED) {
     lp_wkup_stbTx = false;
     lowPowerKick();
@@ -33,73 +52,107 @@ static inline void hwbuttonFunc() {
       lastButtonStates[j]  = 1;
       lastDebounceTimes[j] = millis();
     }
-    lastTxCmdCode = REM_CMD_STATUS;
-    remSendCmdNew(REM_CMD_STATUS);
-    msgTxd         = 1;
-    ackFailAtmp    = 0;
-    ackTimerMillis = millis();
+    staActive   = false;   // wake consumed STA; no chord in progress
+    staConsumed = false;
+    remTxButtonCmd(REM_CMD_STATUS);
     return;
   }
   lp_wkup_stbTx = false;
 
+  // ── Debounce all three buttons first; record stable edges ────────────────────
+  // Debouncing every button before acting means a STA+OFF press resolves STA's
+  // held-state in the same pass, so the OFF edge can never be misread as a
+  // standalone motor-off when STA is genuinely held.
+  uint8_t edgeLow[NUM_BUTTONS]  = { 0, 0, 0 };
+  uint8_t edgeHigh[NUM_BUTTONS] = { 0, 0, 0 };
   for (uint8_t i = 0; i < NUM_BUTTONS; ++i) {
     uint8_t reading = digitalRead(buttonPins[i]);
     if (reading != lastButtonStates[i]) lastDebounceTimes[i] = millis();
     if ((millis() - lastDebounceTimes[i]) > debounceDelay) {
       if (reading != buttonStates[i]) {
         buttonStates[i] = reading;
-
-        if ((buttonStates[i] == LOW) && (buttonEn[i] == ENABLED)) {
-          watchdogReset();
-          lowPowerKick();
-          funcStaLBlue(); buzBeep(50); funcLedReset();
-          while (digitalRead(buttonPins[i]) == LOW) {
-            delay(1);
-          }
-
-          for (uint8_t j = 0; j < NUM_BUTTONS; j++) buttonEn[j] = DISABLED;
-          delay(100);
-
-          switch (i) {
-            case 0:
-              lastTxCmdCode = REM_CMD_M1_ON;
-              remSendCmdNew(REM_CMD_M1_ON);
-              break;
-            case 1:
-              lastTxCmdCode = REM_CMD_M1_OFF;
-              remSendCmdNew(REM_CMD_M1_OFF);
-              break;
-            case 2:
-              lastTxCmdCode = REM_CMD_STATUS;
-              remSendCmdNew(REM_CMD_STATUS);
-              break;
-          }
-
-          msgTxd = 1;
-          ackFailAtmp = 0;
-          ackTimerMillis = millis();
-        }
+        if (reading == LOW) edgeLow[i] = 1; else edgeHigh[i] = 1;
       }
     }
-
     lastButtonStates[i] = reading;
   }
+
+  // ── STA modifier tracking (index 2) ──────────────────────────────────────────
+  if (edgeLow[2] && buttonEn[2] == ENABLED) {
+    staActive   = true;
+    staConsumed = false;
+    lowPowerKick();
+  }
+  if (edgeHigh[2]) {
+    // STA released: if it was a lone tap (no chord consumed it), send STATUS now.
+    if (staActive && !staConsumed && buttonEn[2] == ENABLED && !msgTxd) {
+      watchdogReset();
+      lowPowerKick();
+      funcStaLBlue(); buzBeep(50); funcLedReset();
+      remTxButtonCmd(REM_CMD_STATUS);
+    }
+    staActive   = false;
+    staConsumed = false;
+  }
+
+  // ── Motor / light buttons (indices 0 = ON, 1 = OFF) ──────────────────────────
+  // Only act when no command is already awaiting an ACK.
+  if (!msgTxd) {
+    for (uint8_t i = 0; i < 2; ++i) {
+      if (!edgeLow[i]) continue;
+
+      if (staActive) {
+        // STA held → LIGHT command (chord). NOT gated by the motor buttonEn[] so
+        // the light can be toggled regardless of motor on/off state. The motor
+        // command for this key press is suppressed.
+        watchdogReset();
+        lowPowerKick();
+        funcStaLBlue(); buzBeep(50); funcLedReset();
+        while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
+        staConsumed = true;
+        remTxButtonCmd(i == 0 ? REM_CMD_RELAY_ON : REM_CMD_RELAY_OFF);
+        break;
+      } else if (buttonEn[i] == ENABLED) {
+        // STA not held → MOTOR command (existing motor-state gating).
+        watchdogReset();
+        lowPowerKick();
+        funcStaLBlue(); buzBeep(50); funcLedReset();
+        while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
+        remTxButtonCmd(i == 0 ? REM_CMD_M1_ON : REM_CMD_M1_OFF);
+        break;
+      }
+    }
+  }
+}
+
+// Per-command ack-wait window. Motor ON/OFF wait for the starter's deferred CT-current
+// confirmation (long); STATUS/relay use the short normal round-trip so a dropped packet
+// recovers fast. See ACK_WAIT_*_MS in zSettings.h for the derivation.
+static inline unsigned long ackWaitFor(uint8_t cmd) {
+  if (cmd == REM_CMD_M1_ON)  return ACK_WAIT_ON_MS;
+  if (cmd == REM_CMD_M1_OFF) return ACK_WAIT_OFF_MS;
+  return ACK_WAIT_STATUS_MS;   // STATUS, RELAY_ON/OFF, and default
 }
 
 ////////////////////////////////////////
 void ackReception() {
   if (msgTxd) {
     lowPowerKick();
+    unsigned long ackWait = ackWaitFor(lastTxCmdCode);
 
-    if (rxCrcError) {
+    if (rxCrcError || rxHdrError) {
+      // A reply reached us but failed CRC or header decode — don't wait the full window;
+      // retry ~500 ms from now. Offset scales with the per-command ack-wait.
       rxCrcError = false;
-      ackTimerMillis = millis() - 5500UL;
+      rxHdrError = false;
+      ackTimerMillis = millis() - (ackWait - 500UL);
     }
 
-    if (millis() - ackTimerMillis > 6000) {
+    if (millis() - ackTimerMillis > ackWait) {
       if (ackFailAtmp >= 3) {
-        watchdogReset();   // ~3.4 s of blocking buzzer + LED ahead — pet WDT first
+        watchdogReset();   // pet WDT before tone — tone timing is ~0.5 s
         noNetworkTone();
+        watchdogReset();   // pet again: noTone() restores TCA0 but millis() may lag
         funcStaLPink();
         delay(300);
         funcLedReset();
