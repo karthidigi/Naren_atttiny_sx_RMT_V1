@@ -91,8 +91,7 @@ void setup() {
   ////////////////////
   buzBeep(BUZZ_NOR);
   hwSerialInit();
-  getDeviceSerId();
-  aesInit("[horizon]");
+  getDeviceSerId();   // fills hwSerialKey (chip serial) — the RBP per-remote key source
   sx1268Init();
   lowPowerInit();
 

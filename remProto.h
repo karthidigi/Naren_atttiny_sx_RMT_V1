@@ -3,17 +3,24 @@
 // TX  PKT_REM_CMD (0x22): Remote→Starter  [0x22][ E(MAGIC0,MAGIC1,cmd,   0x00 ) ]  5 bytes
 // RX  PKT_REM_RSP (0x23): Starter→Remote  [0x23][ E(MAGIC0,MAGIC1,status,light) ]  5 bytes
 //
-// Cipher: AES-128-CTR, fixed IV, PER-UNIT key derived from the paired starter serial
-// (same derivation both ends). CTR is symmetric — remCipher4() encrypts and decrypts the
-// 4-byte payload in place. NO sequence number, NO MAC (vs v1 → archive/remProto_rbp_v1.h):
+// Cipher: AES-128-CTR, fixed IV, PER-REMOTE key derived from THIS REMOTE'S OWN chip
+// serial (hwSerialKey — the same 20 chars sent to the starter in the 0x0D pairing REQ).
+// The starter holds every paired remote's serial in its roster and trial-decrypts RX
+// packets against each key, so it knows exactly WHICH remote is talking and encrypts
+// its RSP with that remote's key. Same 5-byte frame as before — zero added bytes.
+// (Old scheme derived from the paired STARTER serial — one shared key for all remotes,
+// no sender identity, no real revocation. BREAKING change: starter must run the
+// matching roster firmware, and this remote must RE-PAIR after flashing.)
+// CTR is symmetric — remCipher4() encrypts and decrypts the 4-byte payload in place.
+// NO sequence number, NO MAC (vs v1 → archive/remProto_rbp_v1.h):
 // the 2-byte MAGIC inside the encrypted payload is the integrity/identity check, and the
 // starter time-window-dedups retransmits. The remote sends the same bytes on a retry
 // (deterministic ciphertext) and accepts ANY valid RSP (no seqEcho to match).
 //
 // Requires (included before this file via .ino):
 //   zSettings.h      → PKT_REM_CMD/RSP, REM_CMD_*, REM_STA_*, RBP_MAGIC0/1
-//   aesMain.h        → AES_ctx, AES_init_ctx_iv, AES_CTR_xcrypt_buffer, fromHexChar
-//   eeprom.h         → readPeerSerial()
+//   aesMain.h        → AES_ctx, AES_init_ctx_iv, AES_CTR_xcrypt_buffer, fromHexChar,
+//                      hwSerialKey (own chip serial, filled by getDeviceSerId at boot)
 //   states.h         → buttonEn[], msgTxd, ENABLED/DISABLED
 //   buz.h / led.h    → buzBeep(), funcM1Yellow/funcM1LRed/funcStaL*/funcLedReset, motorOnTone()
 //   sx1268Main.h     → send_lora_data()
@@ -25,25 +32,19 @@
 // commands vs motor feedback for M1 commands.
 static uint8_t remLastSentCmd = 0;
 
-// ── Peer serial cache (starter serial stored at pairing) ─────────────────────
-static char remPeerSerial[21] = {'\0'};
+// Kept as a no-op for the pairRemoteNode.h call site: the RBP key now derives from
+// THIS remote's own serial (constant for the life of the chip), so there is no
+// peer-serial cache left to invalidate after a re-pair.
+void remInvalidatePeerCache() {}
 
-static void remLoadPeerSerial() {
-    if (remPeerSerial[0] == '\0') {
-        readPeerSerial(remPeerSerial, sizeof(remPeerSerial));
-    }
-}
-
-// Call after re-pairing to flush the cache.
-void remInvalidatePeerCache() { remPeerSerial[0] = '\0'; }
-
-// ── Per-unit cipher key from the paired starter serial ───────────────────────
+// ── Per-remote cipher key from THIS remote's own chip serial ──────────────────
+// All 20 hex chars (10 bytes) of the serial go into key bytes 0..9 for maximum
+// per-unit entropy. Bytes 14/15 are the protocol-version salt. MUST match the
+// starter's remBuildKeyFor() in Naren_FSMC_AVRDB_RMT_V1 remProto.h exactly.
 static void remBuildKey(uint8_t *key16) {
-    remLoadPeerSerial();
     memset(key16, 0, 16);
-    const char *last12 = remPeerSerial + 8;          // last 12 hex chars = 6 bytes
-    for (uint8_t i = 0; i < 6; i++) {
-        key16[10 + i] = (fromHexChar(last12[i * 2]) << 4) | fromHexChar(last12[i * 2 + 1]);
+    for (uint8_t i = 0; i < 10; i++) {
+        key16[i] = (fromHexChar(hwSerialKey[i * 2]) << 4) | fromHexChar(hwSerialKey[i * 2 + 1]);
     }
     key16[14] = PKT_REM_CMD;    // 0x22 — protocol-version salt
     key16[15] = PKT_REM_RSP;    // 0x23
