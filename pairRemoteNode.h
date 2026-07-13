@@ -63,7 +63,7 @@ static uint8_t pairRemNodeAckPre    = OPER_PREAMBLE;
 static uint8_t pairRemNodeAckPwr    = OPER_TX_POWER;
 
 // ── enterRemNodePairMode() ────────────────────────────────────────────────────
-// Called automatically when EEPROM peer serial is empty, or after clearPeerSerial().
+// Called automatically when the stored EEPROM peer serial is empty (factory-fresh).
 void enterRemNodePairMode() {
     switchToPairChannel();
     pairRemNodeBeaconMs    = 0;     // trigger immediate first beacon
@@ -146,9 +146,9 @@ static void pairRemNodeCommit() {
     switchToOperationalChannel();   // operational SF/BW + dynamic sync word
     pairBootInitDone = true;        // block IDLE from re-switching the channel
 
-    // Motor control buttons: motor OFF at pairing time.
+    // Motor control buttons: all enabled once paired (no status gating).
     buttonEn[0] = ENABLED;   // M1_ON
-    buttonEn[1] = DISABLED;  // M1_OFF
+    buttonEn[1] = ENABLED;   // M1_OFF — always available (stop must always work)
     buttonEn[2] = ENABLED;   // STA
 
     pairConfirmStatusPending = true;   // fire one STATUS next tick (reachability proof)
@@ -165,7 +165,7 @@ static void pairRemNodeRevert() {
     loadOperSyncWord(&g_operSyncMsb, &g_operSyncLsb);  // restore previous channel sync
     switchToOperationalChannel();
     buttonEn[0] = ENABLED;    // M1_ON
-    buttonEn[1] = DISABLED;   // M1_OFF (motor off)
+    buttonEn[1] = ENABLED;    // M1_OFF — always available (stop must always work)
     buttonEn[2] = ENABLED;    // STA
     pairBootInitDone = true;  // prevent IDLE from re-switching the channel
     // Error feedback: orange + two short beeps = pairing failed, reverted.
@@ -230,9 +230,9 @@ void pairRemNodeTick() {
     switch (pairRemNodeState) {
 
         case PAIR_REMNODE_IDLE: {
-            // Read EEPROM only once (cache = -1 on first call after boot or after
-            // clearPeerSerial()). After that the cached value is reused so we don't
-            // burn 20 EEPROM reads every 5 ms loop iteration.
+            // Read EEPROM only once (cache = -1 on first call after boot). After
+            // that the cached value is reused so we don't burn 20 EEPROM reads
+            // every 5 ms loop iteration.
             if (peerSerialCached < 0) {
                 char peerBuf[21];
                 readPeerSerial(peerBuf, sizeof(peerBuf));
@@ -273,9 +273,9 @@ void pairRemNodeTick() {
                     pairBootInitDone = true;
                     switchToOperationalChannel();
                     bootPrimePending = true;   // warm the radio before the user's first press
-                    // Enable buttons (motors are off at boot — ON buttons active)
+                    // Enable ALL buttons (no motor-status gating)
                     buttonEn[0] = ENABLED;   // M1_ON
-                    buttonEn[1] = DISABLED;  // M1_OFF (motor off — can't turn off again)
+                    buttonEn[1] = ENABLED;   // M1_OFF — always available (stop must always work)
                     buttonEn[2] = ENABLED;   // STA
                 }
                 // else: already on operational channel — nothing to do

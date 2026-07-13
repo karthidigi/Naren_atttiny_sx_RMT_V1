@@ -96,7 +96,7 @@ void setup() {
   lowPowerInit();
 
   // Trigger re-pair now that radio is initialised.
-  // NOTE: do NOT clearPeerSerial() here — the previous binding must survive a
+  // NOTE: do NOT clear the peer serial here — the previous binding must survive a
   // failed/aborted re-pair. The new peer is committed only after the full
   // 0x0D→0x0E→0x0F handshake succeeds (see pairRemoteNode.h). If the re-pair
   // times out, the BEACONING-timeout revert restores the previous peer + channel.
@@ -118,7 +118,7 @@ void setup() {
       pairBootInitDone = true;   // tell pairRemNodeTick the boot channel switch is already done
       peerSerialCached = 1;      // keep its cache consistent → no duplicate EEPROM read
       buttonEn[0] = ENABLED;     // M1_ON
-      buttonEn[1] = DISABLED;    // M1_OFF (motor off at boot — can't turn off again)
+      buttonEn[1] = ENABLED;     // M1_OFF — always enabled once paired (no status gating)
       buttonEn[2] = ENABLED;     // STA
     }
   }

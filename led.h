@@ -53,12 +53,6 @@ void funcStaLWhite() {
   PORTB.DIRSET = PIN3_bm | PIN4_bm;
 }
 
-void funcM1LGreen() {
-  funcLedReset();
-  PORTB.OUTCLR = PIN4_bm;   // PB4 LOW → green LED on
-  PORTB.DIRSET = PIN4_bm;
-}
-
 void funcM1LRed() {
   funcStaLRed();             // same cathode as status red
 }
@@ -69,16 +63,6 @@ void funcM1Yellow() {
   PORTB.OUTCLR = PIN4_bm;   // green cathode on → together = yellow
   PORTC.DIRSET = PIN1_bm;
   PORTB.DIRSET = PIN4_bm;
-}
-
-void funcLedTest() {
-  funcStaLWhite();  delay(50);
-  funcStaLBlue();   delay(50);
-  funcStaLRed();    delay(50);
-  funcM1LRed();     delay(50);
-  funcM1LGreen();   delay(50);
-  funcM1Yellow();   delay(50);
-  funcLedReset();
 }
 
 void lowBattAlert() {

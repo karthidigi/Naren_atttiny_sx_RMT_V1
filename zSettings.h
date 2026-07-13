@@ -47,8 +47,8 @@
 //  SF10_BW250          10  250kHz  4/5   OFF  ~0.26 s   Fast/short-range baseline
 //
 // LDRO: required ON when symbol time > 16 ms (SF11/SF12 at BW125).
-#define LORA_PROFILE_SF11_BW125     // ← recommended
-// #define LORA_PROFILE_SF12_BW125  // extreme range (+3 dB vs SF11, ToA ~3.4 s)
+// #define LORA_PROFILE_SF11_BW125  // long range + reasonable speed
+#define LORA_PROFILE_SF12_BW125     // ← ACTIVE — MUST match the starter (it runs SF12)
 // #define LORA_PROFILE_SF10_BW250  // fast/short-range baseline
 
 #if defined(LORA_PROFILE_SF11_BW125)

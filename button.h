@@ -6,7 +6,7 @@ static unsigned long lastDebounceTimes[NUM_BUTTONS] = { 0, 0, 0 };
 static const unsigned long debounceDelay = 50UL;
 unsigned long ackTimerMillis = 0;
 uint8_t ackFailAtmp = 0;
-static uint8_t lastTxCmdCode = 0;  // REM_CMD_* of the last new command; 0 = none
+// (lastTxCmdCode moved to states.h — remProto.h needs it for the OFF-pre-empt guard)
 
 // Forward declaration — enterRemNodePairMode() is defined in pairRemoteNode.h
 // which is included after button.h in the .ino
@@ -21,10 +21,14 @@ void enterRemNodePairMode();
 static bool staActive   = false;  // STA currently held (debounced)
 static bool staConsumed = false;  // a chord fired during this STA hold
 
-// Centralised command TX: disable all buttons until the ACK arrives, send, arm
-// the retry timer. Used by every button/chord path.
+// Centralised command TX: send, arm the retry timer. ON(0)/STA(2) are disabled
+// for the ACK window (redundant with msgTxd but kept for the wake/chord gates);
+// OFF(1) is deliberately LEFT ENABLED so it can pre-empt the pending command —
+// once paired, the stop key must always work. Calling this while msgTxd is
+// already set simply REPLACES the pending command (fresh retry state).
 static inline void remTxButtonCmd(uint8_t cmd) {
-  for (uint8_t j = 0; j < NUM_BUTTONS; j++) buttonEn[j] = DISABLED;
+  buttonEn[0] = DISABLED;
+  buttonEn[2] = DISABLED;
   lastTxCmdCode  = cmd;
   remSendCmdNew(cmd);
   msgTxd         = 1;
@@ -96,31 +100,57 @@ static inline void hwbuttonFunc() {
   }
 
   // ── Motor / light buttons (indices 0 = ON, 1 = OFF) ──────────────────────────
-  // Only act when no command is already awaiting an ACK.
-  if (!msgTxd) {
-    for (uint8_t i = 0; i < 2; ++i) {
-      if (!edgeLow[i]) continue;
+  // Always-enabled motor buttons (no starter-status gating):
+  //   • OFF — enabled whenever the remote is PAIRED (buttonEn[1] set at boot/
+  //     pairing, never cleared by motor status) and PRE-EMPTS an in-flight
+  //     command: pressing OFF while an ON/STATUS awaits its ACK abandons that
+  //     wait and TXes M1_OFF immediately — stop always wins.
+  //   • ON  — also independent of last-known motor status, but it must NOT
+  //     pre-empt: while any command is in flight (msgTxd) ON is ignored, so a
+  //     pending OFF can never be overridden by a start.
+  //   • Light chord (STA held) — unchanged: needs an idle link (!msgTxd).
+  // The starter is idempotent + time-window-deduped on both commands, so a
+  // redundant ON/OFF is answered from cache without re-actuating the relay.
+  for (uint8_t i = 0; i < 2; ++i) {
+    if (!edgeLow[i]) continue;
 
-      if (staActive) {
-        // STA held → LIGHT command (chord). NOT gated by the motor buttonEn[] so
-        // the light can be toggled regardless of motor on/off state. The motor
-        // command for this key press is suppressed.
-        watchdogReset();
-        lowPowerKick();
-        funcStaLBlue(); buzBeep(50); funcLedReset();
-        while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
-        staConsumed = true;
-        remTxButtonCmd(i == 0 ? REM_CMD_RELAY_ON : REM_CMD_RELAY_OFF);
-        break;
-      } else if (buttonEn[i] == ENABLED) {
-        // STA not held → MOTOR command (existing motor-state gating).
-        watchdogReset();
-        lowPowerKick();
-        funcStaLBlue(); buzBeep(50); funcLedReset();
-        while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
-        remTxButtonCmd(i == 0 ? REM_CMD_M1_ON : REM_CMD_M1_OFF);
-        break;
-      }
+    if (staActive) {
+      // STA held → LIGHT command (chord). NOT gated by the motor buttonEn[] so
+      // the light can be toggled regardless of motor on/off state. The motor
+      // command for this key press is suppressed.
+      if (msgTxd) continue;
+      watchdogReset();
+      lowPowerKick();
+      funcStaLBlue(); buzBeep(50); funcLedReset();
+      while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
+      staConsumed = true;
+      remTxButtonCmd(i == 0 ? REM_CMD_RELAY_ON : REM_CMD_RELAY_OFF);
+      break;
+    } else if (i == 1 && buttonEn[1] == ENABLED
+               && (!msgTxd
+                   || lastTxCmdCode == REM_CMD_M1_ON
+                   || lastTxCmdCode == REM_CMD_M1_OFF
+                   || lastTxCmdCode == REM_CMD_STATUS)) {
+      // OFF — allowed even mid-ACK-wait (pre-empt): remTxButtonCmd replaces the
+      // pending command and restarts the retry state for M1_OFF.
+      // Pre-empt is limited to MOTOR/STATUS in-flight commands: a RELAY light
+      // chord must settle first, otherwise its crossed RSP (status=OFF) would be
+      // mis-read as the OFF's ACK and cancel the OFF retry (review finding 7).
+      // The RELAY ack window is short (~2×ToA+0.9 s), so the wait is brief.
+      watchdogReset();
+      lowPowerKick();
+      funcStaLBlue(); buzBeep(50); funcLedReset();
+      while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
+      remTxButtonCmd(REM_CMD_M1_OFF);
+      break;
+    } else if (i == 0 && !msgTxd && buttonEn[0] == ENABLED) {
+      // ON — no pre-empt; waits for an idle link.
+      watchdogReset();
+      lowPowerKick();
+      funcStaLBlue(); buzBeep(50); funcLedReset();
+      while (digitalRead(buttonPins[i]) == LOW) { watchdogReset(); delay(1); }
+      remTxButtonCmd(REM_CMD_M1_ON);
+      break;
     }
   }
 }

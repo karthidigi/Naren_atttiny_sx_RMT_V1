@@ -36,8 +36,8 @@ void motorOnTone() {
   // can drive PB4 as PWM while we use it as a direct PORT output.
   TCA0.SPLIT.CTRLB &= ~TCA_SPLIT_HCMP1EN_bm;
 
-  // Direct PORT writes — avoids funcM1LGreen() calling funcLedReset() which
-  // briefly floats PB4 as high-Z on every ON half of the blink.
+  // Direct PORT writes — avoids the shared green-LED helper's funcLedReset(),
+  // which briefly floats PB4 as high-Z on every ON half of the blink.
   bool ledState = true;
   PORTB.OUTCLR = PIN4_bm;   // output register LOW (cathode sink = LED on)
   PORTB.DIRSET = PIN4_bm;   // drive → LED ON

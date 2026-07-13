@@ -100,45 +100,50 @@ void remHandleRsp(const uint8_t *buf, uint8_t len) {
     DEBUG_PRINT(F(" light="));
     DEBUG_PRINTN(light);
 
+    // ── OFF-pre-empt stale-ACK guard ──────────────────────────────────────────
+    // If OFF pre-empted a pending ON, the starter's deferred ON-ack can cross our
+    // M1_OFF on air. Accepting that "ON" RSP as the OFF's answer would clear
+    // msgTxd and silently kill the OFF retry. So while an M1_OFF is in flight, a
+    // RSP still reporting ON is treated as stale — ignored; the retry continues
+    // until a non-ON RSP (or the no-network fallback re-enables everything).
+    if (msgTxd && lastTxCmdCode == REM_CMD_M1_OFF && status == REM_STA_ON) {
+        DEBUG_PRINTN(F("RBP: stale ON-ack during OFF — keep waiting"));
+        return;
+    }
+
     // Any valid RSP clears the pending TX (no seqEcho in v2).
     msgTxd = 0;
 
+    // Always-enabled motor buttons: enables no longer track the starter's motor
+    // status — every valid RSP just re-opens all three keys. The starter is
+    // idempotent + deduped, so a redundant ON/OFF is harmless (answered from
+    // cache, no re-actuation).
+    buttonEn[0] = ENABLED;
+    buttonEn[1] = ENABLED;
+    buttonEn[2] = ENABLED;
+
     // Light-switch RSP — RELAY command → light feedback (only when ON, per spec).
-    // Button enables still track motor state from `status`.
     if (remLastSentCmd == REM_CMD_RELAY_ON || remLastSentCmd == REM_CMD_RELAY_OFF) {
-        bool lightOn = (light != 0);
-        if (status == REM_STA_ON) { buttonEn[0] = DISABLED; buttonEn[1] = ENABLED; }
-        else                      { buttonEn[0] = ENABLED;  buttonEn[1] = DISABLED; }
-        buttonEn[2] = ENABLED;
-        if (lightOn) {
+        if (light != 0) {
             funcM1Yellow(); buzBeep(100); funcLedReset();
         }
         return;
     }
 
-    // Motor RSP — drive LED/buzzer feedback and update button enables.
+    // Motor RSP — LED/buzzer feedback per status.
     switch (status) {
 
         case REM_STA_ON:
-            buttonEn[0] = DISABLED;    // M1_ON  (already on)
-            buttonEn[1] = ENABLED;     // M1_OFF
-            buttonEn[2] = ENABLED;     // STA
             watchdogReset();
             motorOnTone();             // green blink + tone (~0.5 s, blocks; WDT reset before)
             break;
 
         case REM_STA_OFF:
-            buttonEn[0] = ENABLED;
-            buttonEn[1] = DISABLED;    // M1_OFF (already off)
-            buttonEn[2] = ENABLED;
             funcM1LRed();  buzBeep(100); funcLedReset(); delay(100);
             funcM1LRed();  buzBeep(100); funcLedReset();
             break;
 
         case REM_STA_BLK_BYPASS:
-            buttonEn[0] = ENABLED;
-            buttonEn[1] = ENABLED;
-            buttonEn[2] = ENABLED;
             funcStaLCyan();
             buzBeep(100); delay(80);
             buzBeep(100); delay(80);
@@ -147,9 +152,6 @@ void remHandleRsp(const uint8_t *buf, uint8_t len) {
             break;
 
         case REM_STA_BLK_VFAULT:
-            buttonEn[0] = ENABLED;
-            buttonEn[1] = ENABLED;
-            buttonEn[2] = ENABLED;
             funcStaLOrange();
             buzBeep(300); delay(100);
             buzBeep(300);
@@ -157,17 +159,11 @@ void remHandleRsp(const uint8_t *buf, uint8_t len) {
             break;
 
         case REM_STA_FAULT:
-            buttonEn[0] = ENABLED;
-            buttonEn[1] = DISABLED;
-            buttonEn[2] = ENABLED;
             funcStaLOrange(); buzBeep(100); funcLedReset(); delay(100);
             funcStaLOrange(); buzBeep(100); funcLedReset();
             break;
 
         default:
-            buttonEn[0] = ENABLED;
-            buttonEn[1] = ENABLED;
-            buttonEn[2] = ENABLED;
             break;
     }
 }
