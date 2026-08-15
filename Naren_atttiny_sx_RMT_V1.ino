@@ -144,13 +144,23 @@ void loop() {
 
   // Periodic low-battery check every 30 s.
   // WDT is reset before the alert so the ~2.4 s blocking sequence is safe.
+  //
+  // Guard: skip the check (do NOT advance lastBatCheck) while the radio is actively
+  // transmitting. In STATE_TX_SETUP/STATE_TX_WAIT the SX1268 draws ~120 mA at 22 dBm
+  // for the ~240 ms TX window; on partially-discharged AAs (elevated ESR) VDD sags,
+  // and all 3 reads in battCheck() catch the load-induced sag and fall below
+  // BAT_VOL_MIN → a FALSE low-battery alert even though the resting voltage is healthy.
+  // By not advancing lastBatCheck, the check retries on the next loop once TX exits
+  // (~240 ms later, in STATE_RX_SETUP) and measures VDD at resting load.
   static unsigned long lastBatCheck = 0;
   if (millis() - lastBatCheck >= 30000UL) {
-    lastBatCheck = millis();
-    if (!battCheck()) {
-      if (wdtEnabled) watchdogReset();
-      lowBattAlert();
-      buzBeep(80); delay(100); buzBeep(80); delay(100); buzBeep(80);  // 3 beeps after 5 blinks
+    if (radio_state != STATE_TX_SETUP && radio_state != STATE_TX_WAIT) {
+      lastBatCheck = millis();
+      if (!battCheck()) {
+        if (wdtEnabled) watchdogReset();
+        lowBattAlert();
+        buzBeep(80); delay(100); buzBeep(80); delay(100); buzBeep(80);  // 3 beeps after 5 blinks
+      }
     }
   }
 
