@@ -1,3 +1,11 @@
-*.bin
 .DS_Store
+
+# Arduino / megaTinyCore build artifacts
+*.lst
+*.map
+*.hex
+*.elf
+*.eep
+*.bin
 Build/
+build/
