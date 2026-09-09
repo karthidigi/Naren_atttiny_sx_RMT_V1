@@ -465,7 +465,9 @@ void sx1268Func() {
         // Defensive: re-apply the configured RX gain (OPER_RX_GAIN) on every RX entry
         // in case the SX1262's internal AGC reset reverted 0x08AC.
         {
-          uint8_t _rxGain = OPER_RX_GAIN;
+          // Per-channel: boosted gain on the operational link only. See PAIR_RX_GAIN
+          // in zSettings.h for why the pair channel must stay on power-saving gain.
+          uint8_t _rxGain = pairing_mode ? PAIR_RX_GAIN : OPER_RX_GAIN;
           sx126x_write_register(RADIO, SX126X_REG_RXGAIN, &_rxGain, 1);
         }
         sx126x_set_rx(RADIO, RX_TIMEOUT_MS);   // timed window in ms (driver converts to RTC steps)

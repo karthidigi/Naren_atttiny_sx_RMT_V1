@@ -36,6 +36,16 @@
 #define PAIR_SYNC_MSB     0x12
 #define PAIR_SYNC_LSB     0x34
 #define PAIR_TX_POWER     14
+// PAIR channel RX gain: power-saving (0x94), NEVER the boosted 0x96.
+// Pairing is a near-field operation by design -- the remote is held right next
+// to the starter, so a SF7 link at 14 dBm can present RSSI around -20 dBm.
+// Boosted gain OVERLOADS the receiver front end at that level and the symptom
+// is header errors, i.e. a handshake that never completes. Boosted gain buys
+// RANGE, which is the one thing pairing does not need. Operational traffic
+// keeps OPER_RX_GAIN. Enabling boosted gain globally broke pairing exactly
+// this way; this split keeps the pair channel byte-identical to the config
+// that always worked while the operational link keeps the extra 3 dB.
+#define PAIR_RX_GAIN      0x94
 // LDRO: SF7+BW125 → symbol time 1.0 ms < 16 ms → OFF (literal 0)
 
 // ── Operational LoRa profile (compile-time; pick EXACTLY ONE) ──────────────
