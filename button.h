@@ -168,12 +168,6 @@ static inline unsigned long ackWaitFor(uint8_t cmd) {
 void ackReception() {
   if (msgTxd) {
     lowPowerKick();
-
-    // Belt and braces for the loop-order fix in the .ino: never start a retransmit
-    // while DIO1 still has an unserviced interrupt. The packet waiting in the radio
-    // may be the very ack this retry is about to talk over. Deferring costs one 5 ms
-    // loop pass; not deferring costs the ack.
-    if (dio1_triggered) return;
     unsigned long ackWait = ackWaitFor(lastTxCmdCode);
 
     if (rxCrcError || rxHdrError) {

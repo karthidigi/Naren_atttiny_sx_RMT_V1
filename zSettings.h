@@ -36,16 +36,6 @@
 #define PAIR_SYNC_MSB     0x12
 #define PAIR_SYNC_LSB     0x34
 #define PAIR_TX_POWER     14
-// PAIR channel RX gain: power-saving (0x94), NEVER the boosted 0x96.
-// Pairing is a near-field operation by design -- the remote is held right next
-// to the starter, so a SF7 link at 14 dBm can present RSSI around -20 dBm.
-// Boosted gain OVERLOADS the receiver front end at that level and the symptom
-// is header errors, i.e. a handshake that never completes. Boosted gain buys
-// RANGE, which is the one thing pairing does not need. Operational traffic
-// keeps OPER_RX_GAIN. Enabling boosted gain globally broke pairing exactly
-// this way; this split keeps the pair channel byte-identical to the config
-// that always worked while the operational link keeps the extra 3 dB.
-#define PAIR_RX_GAIN      0x94
 // LDRO: SF7+BW125 → symbol time 1.0 ms < 16 ms → OFF (literal 0)
 
 // ── Operational LoRa profile (compile-time; pick EXACTLY ONE) ──────────────
@@ -119,12 +109,12 @@
 // LOCAL 0/1 flag (not an #if vs driver symbols — same include-order trap as the
 // header-mode block above; the raw 0x94/0x96 values below expand at point-of-use).
 #define OPER_USE_BOOSTED_RX_GAIN  1   // 0 = power-saving 0x94, 1 = boosted 0x96
-// Set to 1: +3 dB of RX sensitivity on BOTH ends, which is free link margin on a
-// link that is dropping packets. It was set to 0 to test whether near-field
-// overload was causing header errors; the IQ-polarity override turned out to be
-// that fix, so the 3 dB was being given away for nothing. If strong-signal header
-// errors reappear the [RF] HDRerr lines will show them at high rssiInst -- revert
-// this one line then. MUST match the starter.
+// ENABLED. This is the ONLY functional difference between this build and 11817a1,
+// the last build in which pairing was known to work. Isolated deliberately: a batch
+// of changes that cannot be bisected is what made the previous regression so
+// expensive to chase. Applied globally (pair channel included) because that is what
+// was asked for; if pairing fails on THIS build then the gain itself is the cause,
+// and the answer is to scope it per-channel (near-field pairing does not need it).
 #if OPER_USE_BOOSTED_RX_GAIN
   #define OPER_RX_GAIN  0x96   // boosted gain (reg 0x08AC)
 #else
@@ -150,13 +140,7 @@
 //   Worst-case deferred ack lands at 2×0.66 + defer + 0.05 → each window clears it by ~0.47 s.
 #define ACK_WAIT_DEFER_OFF_MS  4000UL   // mirrors starter REM_OFF_ACK_MS
 #define ACK_WAIT_DEFER_ON_MS   6000UL   // mirrors starter REM_ON_ACK_MS
-// Fixed part raised 900 -> 1500 ms. At SF12 the nominal STATUS round trip is
-// already ~2.3 s of pure airtime, so 900 ms had to cover two loop latencies, the
-// starter 50 ms turnaround hold-off, two TCXO starts and any LCD work the starter
-// was doing. That is too thin: a reply that IS coming gets a retransmit fired over
-// the top of it, the two collide, and a working link looks like a dead one.
-// Costs nothing when the ack arrives on time.
-#define ACK_WAIT_STATUS_MS  ((2UL * OPER_TOA_MS) + 1500UL)
+#define ACK_WAIT_STATUS_MS  ((2UL * OPER_TOA_MS) + 900UL)
 #define ACK_WAIT_OFF_MS     ((2UL * OPER_TOA_MS) + ACK_WAIT_DEFER_OFF_MS + 400UL)
 #define ACK_WAIT_ON_MS      ((2UL * OPER_TOA_MS) + ACK_WAIT_DEFER_ON_MS  + 400UL)
 // Flat ACK_WAIT_MS retained as the MAX of the three, used only to size the radio RX
