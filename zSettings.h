@@ -4,7 +4,7 @@
 #define HARDWARE_VERSION        "1.1.1"
 
 /////////////////////////////////////////////////////
-#define SERIAL_DEBUG   // uncomment for debug output via Serial (UART2)
+// #define SERIAL_DEBUG   // uncomment for debug output via Serial (UART2)
 #define SERIAL_BAUD     115200
 #define SERIAL_TIMEOUT  100
 
@@ -108,7 +108,13 @@
 // whether the near-field header errors clear; flip to 1 if range suffers.
 // LOCAL 0/1 flag (not an #if vs driver symbols — same include-order trap as the
 // header-mode block above; the raw 0x94/0x96 values below expand at point-of-use).
-#define OPER_USE_BOOSTED_RX_GAIN  0   // 0 = power-saving 0x94, 1 = boosted 0x96
+#define OPER_USE_BOOSTED_RX_GAIN  1   // 0 = power-saving 0x94, 1 = boosted 0x96
+// Set to 1: +3 dB of RX sensitivity on BOTH ends, which is free link margin on a
+// link that is dropping packets. It was set to 0 to test whether near-field
+// overload was causing header errors; the IQ-polarity override turned out to be
+// that fix, so the 3 dB was being given away for nothing. If strong-signal header
+// errors reappear the [RF] HDRerr lines will show them at high rssiInst -- revert
+// this one line then. MUST match the starter.
 #if OPER_USE_BOOSTED_RX_GAIN
   #define OPER_RX_GAIN  0x96   // boosted gain (reg 0x08AC)
 #else
@@ -134,7 +140,13 @@
 //   Worst-case deferred ack lands at 2×0.66 + defer + 0.05 → each window clears it by ~0.47 s.
 #define ACK_WAIT_DEFER_OFF_MS  4000UL   // mirrors starter REM_OFF_ACK_MS
 #define ACK_WAIT_DEFER_ON_MS   6000UL   // mirrors starter REM_ON_ACK_MS
-#define ACK_WAIT_STATUS_MS  ((2UL * OPER_TOA_MS) + 900UL)
+// Fixed part raised 900 -> 1500 ms. At SF12 the nominal STATUS round trip is
+// already ~2.3 s of pure airtime, so 900 ms had to cover two loop latencies, the
+// starter 50 ms turnaround hold-off, two TCXO starts and any LCD work the starter
+// was doing. That is too thin: a reply that IS coming gets a retransmit fired over
+// the top of it, the two collide, and a working link looks like a dead one.
+// Costs nothing when the ack arrives on time.
+#define ACK_WAIT_STATUS_MS  ((2UL * OPER_TOA_MS) + 1500UL)
 #define ACK_WAIT_OFF_MS     ((2UL * OPER_TOA_MS) + ACK_WAIT_DEFER_OFF_MS + 400UL)
 #define ACK_WAIT_ON_MS      ((2UL * OPER_TOA_MS) + ACK_WAIT_DEFER_ON_MS  + 400UL)
 // Flat ACK_WAIT_MS retained as the MAX of the three, used only to size the radio RX

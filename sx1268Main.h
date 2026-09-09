@@ -233,19 +233,35 @@ void sx1268Init() {
 
   // TCXO: configure before calibration (640 RTC steps ≈ 10 ms @ 1.8 V).
   // Calibrate AFTER enabling the TCXO so the PLL/IMG blocks lock to it.
-  sx126x_set_dio3_as_tcxo_ctrl(RADIO, SX126X_TCXO_CTRL_1_8V, 640);
+  // 3200 RTC steps = 50 ms of TCXO settling, raised from 640 (10 ms) to match the
+  // starter. TCXO start-up varies part to part and gets worse cold; if the crystal
+  // is slower than this timeout, the sx126x_cal() on the next line runs against an
+  // UNSTABLE reference and the PLL/image calibration lands slightly off. That gives
+  // a radio that half works -- exactly the "sometimes the starter hears it" symptom.
+  // It matters far more here than on the starter: the remote sleeps after 30 s and
+  // re-runs this whole init on EVERY wake, so a bad calibration is re-rolled before
+  // every user press rather than once at boot. Costs 40 ms of wake time.
+  sx126x_set_dio3_as_tcxo_ctrl(RADIO, SX126X_TCXO_CTRL_1_8V, 3200);
   sx126x_cal(RADIO, SX126X_CAL_ALL);
   sx126x_set_standby(RADIO, SX126X_STANDBY_CFG_RC);
 
   sx126x_set_reg_mode(RADIO, SX126X_REG_MODE_DCDC);
   sx126x_cal_img(RADIO, 0xD7, 0xDB);  // 863–870 MHz covers 867 MHz (MUST match carrier below + starter)
 
-  // ⚠️ TEST B (TEMPORARY): DIO2 RF-switch control DISABLED on the remote to match the
-  //    known-good V2_2 remote (which never enabled it and never had a header error).
-  //    If header errors clear → the V3 remote module has no DIO2-wired switch and enabling
-  //    it was mis-toggling a pin. If comms get WORSE (antenna stranded) → the module DOES
-  //    need it; REVERT by uncommenting the call below.
-  // sx126x_set_dio2_as_rf_sw_ctrl(RADIO, true);   // TEST B: was enabled
+  // DIO2 RF-switch control: deliberately NOT enabled. DIO2 is NOT SOLDERED on this
+  // hardware, and neither TXEN nor RXEN is connected to anything either. There is
+  // therefore no MCU-side control of an antenna switch on this board at all, and
+  // enabling this would only toggle a pad that goes nowhere. The starter is kept
+  // identical for the same reason (it used to enable this, which was a pointless
+  // asymmetry). This supersedes the old "TEST B" note, which framed the setting as
+  // an open experiment; it is not open, the hardware settles it.
+  //
+  // Worth knowing when reading link problems: the SX1262 brings the PA output (RFO)
+  // and the LNA input (RFI) out on SEPARATE pins. If this module carries an active
+  // TX/RX switch, nothing selects its path. Whether that actually costs link margin
+  // is now measurable instead of arguable -- logRxSig() below prints per-packet
+  // RSSI/SNR here, and the starter prints matching [RF] lines.
+  // sx126x_set_dio2_as_rf_sw_ctrl(RADIO, true);   // NOT USED: DIO2 unpopulated
   sx126x_set_pkt_type(RADIO, SX126X_PKT_TYPE_LORA);
 
   // Frequency: 867.1 MHz (MUST equal the starter's LORA_FREQUENCY_HZ + image-cal band above).
@@ -311,6 +327,18 @@ void sx1268Init() {
   PORTA.DIRCLR = PIN7_bm;               // PA7 as input
   PORTA.PIN7CTRL = PORT_ISC_RISING_gc;  // rising-edge sense; enables pin interrupt
 
+  // Device-error latch. The SX1262 records WHY a start-up step failed, and until now
+  // nothing on the remote ever read it, so a failed TCXO start or a bad calibration
+  // was completely invisible here (the starter has reported this since R322).
+  // Printed only when non-zero, so a healthy wake stays silent and this costs no
+  // console noise on a battery unit that re-inits every 30 s.
+  {
+    sx126x_errors_mask_t devErr = 0;
+    sx126x_get_device_errors(RADIO, &devErr);
+    if (devErr) { DEBUG_PRINT(F("[RADIO] devErr=0x")); DEBUG_PRINTN(devErr, HEX); }
+    sx126x_clear_device_errors(RADIO);
+  }
+
   radio_state = STATE_IDLE;
   state_start_time = millis();
   dio1_triggered = false;
@@ -323,6 +351,36 @@ void sx1268Init() {
 // ────────────────────────────────────────────────
 // State machine (called every loop iteration)
 // ────────────────────────────────────────────────
+// RF link-margin diagnostics (mirrors the starter's [RF] lines).
+// The "starter answered but the remote never saw the ACK" half of a missed-comms
+// report can only be settled by measuring what the REMOTE actually heard. A 22 dBm
+// starter TX a few metres away should land near -30..-50 dBm with positive SNR.
+// 20-30 dB below that is an RF-path loss (stranded/uncontrolled antenna switch),
+// not a protocol or timing fault. No throttle is needed here: unlike the starter
+// the remote listens in a TIMED window, so noise false-locks are already bounded.
+#ifdef SERIAL_DEBUG
+static void logRxSig() {
+  sx126x_pkt_status_lora_t st;
+  sx126x_get_lora_pkt_status(RADIO, &st);   // already converted to dBm / dB
+  DEBUG_PRINT(F("[RF] RX ok rssi="));
+  DEBUG_PRINT(st.rssi_pkt_in_dbm);
+  DEBUG_PRINT(F("dBm snr="));
+  DEBUG_PRINT(st.snr_pkt_in_db);
+  DEBUG_PRINTN(F("dB"));
+}
+static void logRxErr(const __FlashStringHelper* tag) {
+  int16_t rssiInst = 0;
+  sx126x_get_rssi_inst(RADIO, &rssiInst);   // already in dBm
+  DEBUG_PRINT(tag);
+  DEBUG_PRINT(F(" rssiInst="));
+  DEBUG_PRINT(rssiInst);
+  DEBUG_PRINTN(F("dBm"));
+}
+#else
+#define logRxSig()  do{}while(0)
+#define logRxErr(t) do{}while(0)
+#endif
+
 void sx1268Func() {
   // Watchdog: full re-init if no DIO1 IRQ fires for 60 s.
   // With timed RX (8 s window) the chip fires a TIMEOUT IRQ every cycle,
@@ -435,6 +493,7 @@ void sx1268Func() {
             if (rx_length > 0 && rx_length <= 32) {
               uint8_t rx_buffer[32];
               sx126x_read_buffer(RADIO, rx_start, rx_buffer, rx_length);
+              logRxSig();   // link margin of this good packet
 
               // Pairing packets only on the pair channel (pairing_mode). Range includes
               // 0x10 (PKT_REM_PAIR_CONFIRM) so the final pairing confirm is routed.
@@ -449,12 +508,14 @@ void sx1268Func() {
           } else if (irq_status & SX126X_IRQ_CRC_ERROR) {
             // Preamble+header OK but payload CRC failed — packet reached us corrupted.
             DEBUG_PRINTN("RX CRC Err");
+            logRxErr(F("[RF] CRCerr"));
             rxCrcError = true;  // signal ackReception() to fast-retry
           } else if (irq_status & SX126X_IRQ_HEADER_ERROR) {
             // Preamble detected but header could not be decoded (weak signal/interference).
             // A reply likely reached us corrupted → fast-retry like a CRC error instead of
             // waiting the full ACK window.
             DEBUG_PRINTN("RX Hdr Err");
+            logRxErr(F("[RF] HDRerr"));
             rxHdrError = true;
           } else if (irq_status & SX126X_IRQ_TIMEOUT) {
             // Timed RX window expired with no packet — no ACK received.
