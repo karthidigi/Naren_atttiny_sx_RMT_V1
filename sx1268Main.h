@@ -233,7 +233,18 @@ void sx1268Init() {
 
   // TCXO: configure before calibration (640 RTC steps ≈ 10 ms @ 1.8 V).
   // Calibrate AFTER enabling the TCXO so the PLL/IMG blocks lock to it.
-  sx126x_set_dio3_as_tcxo_ctrl(RADIO, SX126X_TCXO_CTRL_1_8V, 640);
+  // 3200 RTC steps = 50 ms of TCXO settling, raised from 640 (10 ms) to match the
+  // starter, which has used this value in the field. TCXO start-up varies part to part
+  // and gets worse cold; if the crystal is slower than this timeout then sx126x_cal()
+  // on the next line runs against an UNSTABLE reference and the PLL/image calibration
+  // lands slightly off. That gives a radio that half works, which is exactly the
+  // "sometimes the starter hears the press" symptom.
+  //
+  // It matters far more here than on the starter: the remote sleeps after 30 s and
+  // re-runs this whole init on EVERY wake, so a bad calibration is re-rolled before
+  // nearly every user press rather than once at boot. Cost is 40 ms of extra wake time
+  // per radio transition; every pairing and ack budget has seconds of margin over that.
+  sx126x_set_dio3_as_tcxo_ctrl(RADIO, SX126X_TCXO_CTRL_1_8V, 3200);
   sx126x_cal(RADIO, SX126X_CAL_ALL);
   sx126x_set_standby(RADIO, SX126X_STANDBY_CFG_RC);
 
@@ -310,6 +321,29 @@ void sx1268Init() {
   // DIO1 rising-edge interrupt — native PORT register (ATtiny1606 PA7)
   PORTA.DIRCLR = PIN7_bm;               // PA7 as input
   PORTA.PIN7CTRL = PORT_ISC_RISING_gc;  // rising-edge sense; enables pin interrupt
+
+  // Device-error latch. The SX1262 records WHY a start-up step failed, and nothing on
+  // the remote has ever read it, so a failed TCXO start or a calibration run against a
+  // bad reference was completely invisible here. The starter has reported this since
+  // R322. XOSC_START is the direct check on the TCXO timeout raised above.
+  // Deliberately uses only single-argument DEBUG_PRINTN so debug.h needs no change.
+  {
+    sx126x_errors_mask_t devErr = 0;
+    sx126x_get_device_errors(RADIO, &devErr);
+    if (devErr) {
+      DEBUG_PRINTN(F("[RADIO] device error:"));
+      if (devErr & SX126X_ERRORS_XOSC_START)        DEBUG_PRINTN(F("  XOSC START FAILED (TCXO)"));
+      if (devErr & SX126X_ERRORS_PLL_LOCK)          DEBUG_PRINTN(F("  PLL LOCK FAILED"));
+      if (devErr & SX126X_ERRORS_PLL_CALIBRATION)   DEBUG_PRINTN(F("  PLL CAL FAILED"));
+      if (devErr & SX126X_ERRORS_IMG_CALIBRATION)   DEBUG_PRINTN(F("  IMG CAL FAILED"));
+      if (devErr & SX126X_ERRORS_ADC_CALIBRATION)   DEBUG_PRINTN(F("  ADC CAL FAILED"));
+      if (devErr & SX126X_ERRORS_RC13M_CALIBRATION) DEBUG_PRINTN(F("  RC13M CAL FAILED"));
+      if (devErr & SX126X_ERRORS_RC64K_CALIBRATION) DEBUG_PRINTN(F("  RC64K CAL FAILED"));
+      if (devErr & SX126X_ERRORS_PA_RAMP)           DEBUG_PRINTN(F("  PA RAMP FAILED"));
+    }
+    // Clear so the next read reflects only NEW faults, not this wake's history.
+    sx126x_clear_device_errors(RADIO);
+  }
 
   radio_state = STATE_IDLE;
   state_start_time = millis();

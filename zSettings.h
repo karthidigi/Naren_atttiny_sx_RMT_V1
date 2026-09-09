@@ -3,8 +3,8 @@
 #define FIRMWARE_VERSION        "ATtiny1606"
 #define HARDWARE_VERSION        "1.1.1"
 
-/////////////////////////////////////////////////////
-// #define SERIAL_DEBUG   // uncomment for debug output via Serial (UART2)
+///////////////////////////////////////////////////
+#define SERIAL_DEBUG   // uncomment for debug output via Serial (UART2)
 #define SERIAL_BAUD     115200
 #define SERIAL_TIMEOUT  100
 
@@ -140,7 +140,15 @@
 //   Worst-case deferred ack lands at 2×0.66 + defer + 0.05 → each window clears it by ~0.47 s.
 #define ACK_WAIT_DEFER_OFF_MS  4000UL   // mirrors starter REM_OFF_ACK_MS
 #define ACK_WAIT_DEFER_ON_MS   6000UL   // mirrors starter REM_ON_ACK_MS
-#define ACK_WAIT_STATUS_MS  ((2UL * OPER_TOA_MS) + 900UL)
+// Fixed part raised 900 -> 1500 ms. At SF12 the nominal STATUS round trip is already
+// ~2.3 s of pure airtime, so 900 ms had to cover two loop latencies, the starter 50 ms
+// turnaround hold-off, two TCXO starts and any LCD work the starter was doing. That is
+// too thin: a reply that IS coming gets a retransmit fired over the top of it, the two
+// collide, and a working link looks like a dead one. Costs nothing when the ack is on
+// time -- it only moves the moment we give up. Operational path only: this feeds
+// ackReception(), which returns immediately unless msgTxd is set, and the pairing
+// handshake never sets it.
+#define ACK_WAIT_STATUS_MS  ((2UL * OPER_TOA_MS) + 1500UL)
 #define ACK_WAIT_OFF_MS     ((2UL * OPER_TOA_MS) + ACK_WAIT_DEFER_OFF_MS + 400UL)
 #define ACK_WAIT_ON_MS      ((2UL * OPER_TOA_MS) + ACK_WAIT_DEFER_ON_MS  + 400UL)
 // Flat ACK_WAIT_MS retained as the MAX of the three, used only to size the radio RX
