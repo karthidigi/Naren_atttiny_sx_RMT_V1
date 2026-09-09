@@ -136,8 +136,19 @@ void loop() {
 
   lowPowerPoll();
   hwbuttonFunc();
-  ackReception();      // STA retry / timeout handler (defined in button.h)
+  // sx1268Func() MUST run before ackReception(). The other order could throw away an
+  // ACK the radio had ALREADY received: if the ack-wait expired while an RX_DONE was
+  // still sitting unread in the chip, ackReception() called remSendCmd(), which sets
+  // radio_state = STATE_TX_SETUP and overwrites the shared radioBuf -- destroying the
+  // reply unread and sending a pointless retransmit on top of it. That is the "starter
+  // acted on it but the remote never saw the ACK" symptom. Servicing the radio first
+  // lets a received ack clear msgTxd before the retry logic looks at the clock.
+  //
+  // Cannot affect pairing: ackReception() returns immediately unless msgTxd is set, and
+  // nothing in the pairing handshake sets it (pairing TXes via send_lora_data directly).
+  // The queue-then-service ordering for pairing beacons is unchanged either way.
   sx1268Func();
+  ackReception();      // STA retry / timeout handler (defined in button.h)
   pairRemNodeTick();   // pairing state machine; auto-pairs only on factory-fresh device
   // funcLedReset() removed from here — every LED action already resets at its own end.
   // Removing it allows pairRemNodeTick() 4-phase blink to stay visible between loop ticks.
