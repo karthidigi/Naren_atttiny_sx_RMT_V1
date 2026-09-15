@@ -251,12 +251,21 @@ void sx1268Init() {
   sx126x_set_reg_mode(RADIO, SX126X_REG_MODE_DCDC);
   sx126x_cal_img(RADIO, 0xD7, 0xDB);  // 863–870 MHz covers 867 MHz (MUST match carrier below + starter)
 
-  // ⚠️ TEST B (TEMPORARY): DIO2 RF-switch control DISABLED on the remote to match the
-  //    known-good V2_2 remote (which never enabled it and never had a header error).
-  //    If header errors clear → the V3 remote module has no DIO2-wired switch and enabling
-  //    it was mis-toggling a pin. If comms get WORSE (antenna stranded) → the module DOES
-  //    need it; REVERT by uncommenting the call below.
-  // sx126x_set_dio2_as_rf_sw_ctrl(RADIO, true);   // TEST B: was enabled
+  // ENABLED, matching the starter. The SX1262 die brings the PA output (RFO) and the LNA
+  // input (RFI) out on SEPARATE pins, so something has to select the antenna path on every
+  // TX and RX. Nothing here was selecting it, which means this remote has been running
+  // with a stranded antenna in BOTH directions.
+  //
+  // We know this module switches from DIO2 internally, because removing this exact call
+  // from the STARTER broke pairing outright. "DIO2 is not soldered" describes the carrier
+  // pad; the switch is inside the module. The starter has had it enabled all along, which
+  // is exactly why the range loss looked asymmetric.
+  //
+  // The pairing bisect did NOT clear the remote of this: pairing is done with the two
+  // boards touching, and a stranded antenna still works at 10 cm. It does not work at
+  // 500 m. This supersedes the old "TEST B" note, which framed the setting as an open
+  // experiment. One-line revert if range does not improve.
+  sx126x_set_dio2_as_rf_sw_ctrl(RADIO, true);
   sx126x_set_pkt_type(RADIO, SX126X_PKT_TYPE_LORA);
 
   // Frequency: 867.1 MHz (MUST equal the starter's LORA_FREQUENCY_HZ + image-cal band above).
