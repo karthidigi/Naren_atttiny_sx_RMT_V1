@@ -44,11 +44,13 @@
 //  Profile             SF  BW     CR    LDRO  ToA/pkt   Use-case
 //  SF11_BW125 (★)      11  125kHz  4/8   ON   ~1.7 s    Recommended (long range)
 //  SF12_BW125          12  125kHz  4/8   ON   ~3.4 s    Extreme range (+3 dB vs SF11)
+//  SF11_BW62 (ACTIVE) 11  62.5kHz 4/8   ON   ~1.32 s   +3 dB vs SF11, ~= SF12_BW125 range
 //  SF10_BW250          10  250kHz  4/5   OFF  ~0.26 s   Fast/short-range baseline
 //
-// LDRO: required ON when symbol time > 16 ms (SF11/SF12 at BW125).
+// LDRO: required ON when symbol time > 16 ms (SF11/SF12 at BW125, and SF11 at BW62.5).
+#define LORA_PROFILE_SF11_BW62  // ACTIVE: 62.5 kHz, +3 dB over SF11/BW125 - MUST match starter
 // #define LORA_PROFILE_SF11_BW125  // long range + reasonable speed
-#define LORA_PROFILE_SF12_BW125     // ← ACTIVE — MUST match the starter (it runs SF12)
+// #define LORA_PROFILE_SF12_BW125     // ← ACTIVE — MUST match the starter (it runs SF12)
 // #define LORA_PROFILE_SF10_BW250  // fast/short-range baseline
 
 #if defined(LORA_PROFILE_SF11_BW125)
@@ -65,6 +67,14 @@
   #define OPER_CR        SX126X_LORA_CR_4_8   // max FEC for extreme range
   #define OPER_LDRO      1    // SF12+BW125 symbol time 32.8 ms → LDRO ON
   #define OPER_TOA_MS    1150UL          // SF12/BW125/CR4/8/pre12/PL5/explicit ≈ 1057 ms + margin
+#elif defined(LORA_PROFILE_SF11_BW62)
+  // ~+3 dB sensitivity both ways over SF11/BW125. Symbol 32.768 ms, 1319 ms on air.
+  #define OPER_SF        11
+  #define OPER_BW        SX126X_LORA_BW_062
+  #define OPER_BW_CODE   3    // informational only; this remote never applies the received value
+  #define OPER_CR        SX126X_LORA_CR_4_8   // MUST match starter
+  #define OPER_LDRO      1    // SF11+BW62.5 symbol time 32.8 ms -> LDRO ON (starter computes the same)
+  #define OPER_TOA_MS    1400UL          // SF11/BW62.5/CR4/8/pre12/PL5/explicit = 1319 ms + margin
 #elif defined(LORA_PROFILE_SF10_BW250)
   #define OPER_SF        10
   #define OPER_BW        SX126X_LORA_BW_250
@@ -73,7 +83,7 @@
   #define OPER_LDRO      0    // SF10+BW250 symbol time 4.1 ms → LDRO OFF
   #define OPER_TOA_MS    200UL           // SF10/BW250/CR4/5/pre12/PL5/explicit ≈ 140 ms + margin
 #else
-  #error "zSettings.h: define LORA_PROFILE_SF11_BW125, LORA_PROFILE_SF12_BW125, or LORA_PROFILE_SF10_BW250"
+  #error "zSettings.h: define LORA_PROFILE_SF11_BW125, LORA_PROFILE_SF11_BW62, LORA_PROFILE_SF12_BW125, or LORA_PROFILE_SF10_BW250"
 #endif
 
 // OPER_CR is defined per-profile above.
